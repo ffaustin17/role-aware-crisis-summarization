@@ -1,0 +1,75 @@
+You are generating synthetic target summaries for a research dataset on role-aware crisis communication.
+
+Task:
+Given a crisis-related tweet, responder role(s), disaster type, and optional FReCS metadata, generate:
+1. one short operational note for each assigned responder role
+2. one final integrated role-aware operational summary for the tweet
+3. one structured quality note explaining evidence strength and assumptions
+
+Important framing:
+This is not a normal tweet summary task. Do not simply restate the tweet.
+Your goal is to explain what each assigned responder role should operationally pay attention to based on the tweet and metadata.
+
+Use the tweet as the primary evidence.
+Use Disaster Type, Secondary Annotation, and Information Type as contextual guidance.
+Do not let metadata override the tweet. If metadata suggests a role-specific concern but the tweet is vague, use cautious language.
+
+Responder role guidance:
+- Police: public safety, threat control, crowd control, evacuation support, traffic/access control, scene security, criminal activity.
+- EMS: injuries, casualties, triage, medical urgency, patient transport, vulnerable victims, medical rescue support.
+- Firefighter: fire spread, smoke, containment, hazardous materials, structural danger, trapped people, search and rescue.
+
+Metadata guidance:
+- Secondary Annotation indicates the specialized responder sub-unit or operational layer.
+- Information Type indicates the kind of crisis information being communicated.
+- Use these fields to make the operational note more specific when they are consistent with the tweet.
+- Do not merely restate metadata labels.
+- Do not invent active operations, confirmed casualties, road closures, evacuations, trapped victims, fires, crimes, or hazardous-material incidents unless stated or strongly implied.
+
+FReCS secondary annotation context:
+Police:
+- DCC = Dispatch Call Center: supports emergency call intake, routing, coordination, and dispatch prioritization.
+- TEU = Traffic Enforcement Unit: supports traffic control, access control, road safety, and movement around affected areas.
+- CPU = Crime Protection / Prevention Unit: supports threat assessment, public safety, crime prevention, and scene security.
+
+EMS:
+- MMU = Mobile Medical Unit: supports field medical care, triage, stabilization, and patient transport.
+- CERT = Community Emergency Response Team: supports community-level emergency assistance, light rescue, basic aid, and local coordination.
+
+Firefighter:
+- FC = Fire Control: supports fire suppression, containment, smoke/fire response, and fire spread prevention.
+- HAZMAT = Hazardous Materials: supports hazardous exposure assessment, containment, contamination risk, and responder safety.
+- USAR = Urban Search and Rescue: supports locating, reaching, and extracting trapped or endangered people in damaged structures or difficult environments.
+
+Rules:
+- The keys in "base_summaries" must exactly match the assigned responder roles.
+- If there is one role, the final summary may match that role's note.
+- If there are multiple roles, the final summary must integrate all assigned roles into one concise paragraph or sentence.
+- Keep each role note under 25 words.
+- Keep the final summary under 45 words.
+- Prefer concrete operational implications over generic phrases like "ensure public safety" or "monitor the situation."
+- Use cautious language such as "reported", "possible", "may require", or "should assess" when the tweet is uncertain.
+- Avoid overusing "may require" in every role note; vary cautious phrasing naturally.
+- Do not include hashtags, URLs, usernames, or retweet markers unless essential.
+- Output valid JSON only. Do not include markdown.
+
+Input:
+Responder Roles: {roles}
+Disaster Type: {disaster_type}
+Tweet: {tweet_text}
+Annotation: {secondary_annotations}
+Information Type: {information_type}
+
+Output JSON format:
+{
+  "base_summaries": {
+    "<RoleName>": "<short role-specific operational note>"
+  },
+  "final_base_summary_text": "<one integrated role-aware operational summary>",
+  "quality_notes": {
+    "evidence_strength": "High | Medium | Low",
+    "supporting_signals": ["Tweet", "Disaster Type", "Secondary Annotation", "Information Type"],
+    "assumptions": ["<brief assumption or 'None'>"],
+    "faithfulness_note": "<brief note about uncertainty, grounding, or metadata overreach risk>"
+  }
+}
