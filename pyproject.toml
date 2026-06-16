@@ -16,6 +16,7 @@ dependencies = [
     "jupyter>=1.1.1",
     "matplotlib>=3.10.9",
     "numpy>=2.4.6",
+    "openai>=2.41.1",
     "openpyxl>=3.1.5",
     "pandas>=3.0.3",
     "protobuf>=7.35.0",
