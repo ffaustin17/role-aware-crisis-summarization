@@ -7,6 +7,8 @@ import pandas as pd
 
 
 RAW_DATA_PATH = Path("data/raw/frecs.csv")
+RANDOM_SEED = 42
+OTHER_ROLE_LABEL = "Other"
 
 # Original FReCS columns
 ORIGINAL_TWEET_ID_COLUMN = "Tweet ID"
@@ -50,6 +52,7 @@ RENAME_MAP = {
 
 FINAL_COLUMNS = [
     "tweet_id",
+    "source_row_id",
     "tweet_text",
     "input_text",
     "information_type",
@@ -157,6 +160,53 @@ def build_input_text(row: pd.Series) -> str:
     )
 
 
+def move_other_rows_to_bottom(
+    df: pd.DataFrame,
+    random_seed: int = RANDOM_SEED,
+) -> pd.DataFrame:
+    """
+    Put responder-relevant rows first while preserving tweet-level rows.
+
+    Non-Other rows are shuffled reproducibly so early generation batches see a
+    varied mix of responder-relevant examples. Other rows are preserved and
+    placed after them.
+    """
+    role_labels = df["role"].apply(normalize_text)
+    non_other_df = df[role_labels != OTHER_ROLE_LABEL].copy()
+    other_df = df[role_labels == OTHER_ROLE_LABEL].copy()
+
+    non_other_df = non_other_df.sample(frac=1, random_state=random_seed).copy()
+    other_df = other_df.sample(frac=1, random_state=random_seed).copy()
+
+    return pd.concat([non_other_df, other_df], ignore_index=True).reset_index(
+        drop=True
+    )
+
+
+def other_rows_are_at_bottom(df: pd.DataFrame) -> bool:
+    """Return True when no non-Other row appears after an Other row."""
+    role_labels = df["role"].apply(normalize_text)
+    is_other = role_labels == OTHER_ROLE_LABEL
+    seen_other = is_other.cummax()
+
+    return bool((~seen_other | is_other).all())
+
+
+def summary_keys_match_labels(
+    row: pd.Series,
+    summary_column: str,
+    labels_column: str,
+) -> bool:
+    """Return True when a summary dict's keys exactly match its label array."""
+    summary = row[summary_column]
+    labels = row[labels_column]
+
+    if not isinstance(summary, dict) or not isinstance(labels, list):
+        return False
+
+    return list(summary.keys()) == labels
+
+
 def build_schema_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     """
     Transform the raw FReCS dataframe into a cleaned tweet-level schema dataframe.
@@ -170,6 +220,10 @@ def build_schema_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     working_df = raw_df.copy()
 
     original_row_count = len(working_df)
+
+    # Preserve a traceable 1-based source row number before dropping,
+    # deduplicating, or reordering rows.
+    working_df.insert(0, "source_row_id", range(1, len(working_df) + 1))
 
     # Remove source columns that should not be carried forward.
     columns_to_drop = [ORIGINAL_TWEET_ID_COLUMN, *NULL_EXPORT_COLUMNS]
@@ -193,10 +247,11 @@ def build_schema_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     deduplicated_row_count = len(working_df)
     duplicate_rows_removed = original_row_count - deduplicated_row_count
 
-    # Reset index after row removal and deduplication.
-    working_df = working_df.reset_index(drop=True)
+    # Reorder rows before assigning canonical tweet IDs. This keeps the final
+    # IDs clean, sequential, and deterministic.
+    working_df = move_other_rows_to_bottom(working_df)
 
-    # Add canonical internal tweet_id after deduplication.
+    # Add canonical internal tweet_id after deduplication and final reordering.
     working_df.insert(0, "tweet_id", range(1, len(working_df) + 1))
 
     # Parse slash-separated role and secondary annotation labels.
@@ -227,6 +282,11 @@ def build_schema_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     working_df.attrs["original_row_count"] = original_row_count
     working_df.attrs["deduplicated_row_count"] = deduplicated_row_count
     working_df.attrs["duplicate_rows_removed"] = duplicate_rows_removed
+    role_labels = working_df["role"].apply(normalize_text)
+    working_df.attrs["non_other_row_count"] = int(
+        (role_labels != OTHER_ROLE_LABEL).sum()
+    )
+    working_df.attrs["other_row_count"] = int((role_labels == OTHER_ROLE_LABEL).sum())
 
     return working_df
 
@@ -256,10 +316,13 @@ def validate_schema_df(schema_df: pd.DataFrame) -> None:
         "tweet_id_has_no_nulls": schema_df["tweet_id"].notna().all(),
         "tweet_id_starts_at_1": schema_df["tweet_id"].min() == 1,
         "tweet_id_max_equals_row_count": schema_df["tweet_id"].max() == len(schema_df),
+        "source_row_id_is_unique": schema_df["source_row_id"].is_unique,
+        "source_row_id_has_no_nulls": schema_df["source_row_id"].notna().all(),
         "tweet_text_has_no_nulls": schema_df["tweet_text"].notna().all(),
         "tweet_text_has_no_empty_strings": (schema_df["tweet_text"] != "").all(),
         "tweet_text_is_unique": schema_df["tweet_text"].is_unique,
         "input_text_has_no_nulls": schema_df["input_text"].notna().all(),
+        "other_rows_are_at_bottom": other_rows_are_at_bottom(schema_df),
         "roles_array_has_no_empty_arrays": schema_df["roles_array"]
         .apply(lambda labels: len(labels) > 0)
         .all(),
@@ -268,6 +331,22 @@ def validate_schema_df(schema_df: pd.DataFrame) -> None:
         ]
         .apply(lambda labels: len(labels) > 0)
         .all(),
+        "base_summaries_keys_match_roles_array": schema_df.apply(
+            lambda row: summary_keys_match_labels(
+                row,
+                summary_column="base_summaries",
+                labels_column="roles_array",
+            ),
+            axis=1,
+        ).all(),
+        "specific_summaries_keys_match_secondary_annotations_array": schema_df.apply(
+            lambda row: summary_keys_match_labels(
+                row,
+                summary_column="specific_summaries",
+                labels_column="secondary_annotations_array",
+            ),
+            axis=1,
+        ).all(),
     }
 
     for name, passed in checks.items():
@@ -291,6 +370,8 @@ def print_schema_preview(schema_df: pd.DataFrame) -> None:
     print("\n=== FINAL COLUMN ORDER ===")
     for index, column in enumerate(schema_df.columns, start=1):
         print(f"{index}. {column}")
+
+    print_ordering_summary(schema_df)
 
     print_distribution(schema_df, "role")
     print_distribution(schema_df, "disaster_type")
@@ -334,6 +415,48 @@ def print_schema_preview(schema_df: pd.DataFrame) -> None:
     for _, row in schema_df.head(5).iterrows():
         print(f"\n--- tweet_id={row['tweet_id']} | role={row['role']} ---")
         print(row["input_text"])
+
+
+def print_ordering_summary(schema_df: pd.DataFrame) -> None:
+    """Print a compact summary of the non-Other/Other row ordering."""
+    role_labels = schema_df["role"].apply(normalize_text)
+    is_other = role_labels == OTHER_ROLE_LABEL
+    non_other_count = int((~is_other).sum())
+    other_count = int(is_other.sum())
+    other_indexes = schema_df.index[is_other].tolist()
+    first_other_index = other_indexes[0] if other_indexes else None
+    first_other_position = (
+        first_other_index + 1 if first_other_index is not None else "[none]"
+    )
+
+    display_columns = [
+        "tweet_id",
+        "source_row_id",
+        "role",
+        "disaster_type",
+        "secondary_annotations",
+    ]
+
+    print("\n=== ORDERING SUMMARY ===")
+    print(f"Non-Other rows: {non_other_count:,}")
+    print(f"Other rows: {other_count:,}")
+    print(f"First Other row position: {first_other_position}")
+
+    print("\n=== FIRST ROWS AFTER REORDERING ===")
+    print(schema_df[display_columns].head(10).to_string(index=False))
+
+    if first_other_index is None:
+        return
+
+    boundary_start = max(first_other_index - 5, 0)
+    boundary_end = min(first_other_index + 5, len(schema_df))
+
+    print("\n=== ROWS AROUND OTHER BOUNDARY ===")
+    print(
+        schema_df[display_columns]
+        .iloc[boundary_start:boundary_end]
+        .to_string(index=False)
+    )
 
 
 def main() -> None:
