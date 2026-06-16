@@ -13,13 +13,17 @@ from dotenv import load_dotenv
 
 DEFAULT_INPUT_PATH = Path("data/processed/frecs_training_schema_v2.jsonl")
 DEFAULT_OUTPUT_PATH = Path("data/generated/summaries_v1_test.jsonl")
-DEFAULT_PROMPT_PATH = Path("prompts/base_summaries_generation_v1.txt")
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_LIMIT = 25
 DEFAULT_SEED = 42
 DEFAULT_MAX_OUTPUT_TOKENS = 400
 DEFAULT_RUN_VERSION = "summary_generation_v1"
 OTHER_ROLE_LABEL = "Other"
+
+PROMPT_PATHS = {
+    "v1": Path("prompts/base_summaries_generation_v1.txt"),
+    "v2": Path("prompts/summary_generation_prompt_v2.txt"),
+}
 
 ROLE_LABELS = [
     "EMS",
@@ -30,22 +34,6 @@ ROLE_LABELS = [
     "Police/Firefighter",
     "Police/Firefighter/EMS",
 ]
-
-SECONDARY_ANNOTATION_CONTEXT = """FReCS secondary annotation context:
-Police:
-- DCC = Dispatch Call Center
-- TEU = Traffic Enforcement Unit
-- CPU = Crime Protection / Prevention Unit
-
-EMS:
-- MMU = Mobile Medical Unit
-- CERT = Community Emergency Response Team
-
-Firefighter:
-- FC = Fire Control
-- HAZMAT = Hazardous Materials
-- USAR = Urban Search and Rescue
-"""
 
 URL_PATTERN = re.compile(r"https?://|www\.", re.IGNORECASE)
 USERNAME_PATTERN = re.compile(r"(^|\s)@\w+")
@@ -58,7 +46,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
-    parser.add_argument("--prompt", type=Path, default=DEFAULT_PROMPT_PATH)
+    parser.add_argument(
+        "--prompt",
+        type=Path,
+        default=None,
+        help="Optional prompt path override. Defaults are selected by --prompt-version.",
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument(
         "--input-text-version",
@@ -144,14 +137,32 @@ def read_prompt(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
+def label_array_text(
+    row: dict[str, Any],
+    array_column: str,
+    fallback_column: str,
+) -> str:
+    """Return a readable label list from a parsed array or exact-label fallback."""
+    labels = row.get(array_column)
+
+    if isinstance(labels, list) and labels:
+        return ", ".join(normalize_text(label) for label in labels)
+
+    return normalize_text(row.get(fallback_column))
+
+
 def roles_text(row: dict[str, Any]) -> str:
     """Return a readable role list from roles_array or role fallback."""
-    roles = row.get("roles_array")
+    return label_array_text(row, "roles_array", "role")
 
-    if isinstance(roles, list) and roles:
-        return ", ".join(normalize_text(role) for role in roles)
 
-    return normalize_text(row.get("role"))
+def secondary_annotations_text(row: dict[str, Any]) -> str:
+    """Return readable secondary annotations from the parsed annotation array."""
+    return label_array_text(
+        row,
+        "secondary_annotations_array",
+        "secondary_annotations",
+    )
 
 
 def build_input_text_v1(row: dict[str, Any]) -> tuple[str, list[str]]:
@@ -169,16 +180,16 @@ def build_input_text_v1(row: dict[str, Any]) -> tuple[str, list[str]]:
 
 
 def build_input_text_v2(row: dict[str, Any]) -> tuple[str, list[str]]:
-    """Use v1 fields plus the FReCS secondary annotation label."""
+    """Use v1 fields plus parsed FReCS secondary annotations."""
     input_text, fields = build_input_text_v1(row)
     return (
         "\n".join(
             [
                 input_text,
-                f"Secondary Annotation: {normalize_text(row.get('secondary_annotations'))}",
+                f"Secondary Annotations: {secondary_annotations_text(row)}",
             ]
         ),
-        [*fields, "secondary_annotations"],
+        [*fields, "secondary_annotations_array"],
     )
 
 
@@ -210,12 +221,12 @@ def build_runtime_input_text(
     return builders[input_text_version](row)
 
 
-def build_prompt_text(base_prompt: str, prompt_version: str) -> str:
-    """Build the prompt text for the selected prompt version."""
-    if prompt_version == "v1":
-        return base_prompt
+def resolve_prompt_path(prompt_version: str, prompt_override: Path | None) -> Path:
+    """Return the prompt file path for a prompt version or explicit override."""
+    if prompt_override is not None:
+        return prompt_override
 
-    return f"{base_prompt}\n\n{SECONDARY_ANNOTATION_CONTEXT}"
+    return PROMPT_PATHS[prompt_version]
 
 
 def build_api_input(prompt_text: str, input_text: str) -> str:
@@ -457,8 +468,8 @@ def main() -> int:
     model = args.model or os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
 
     records = read_jsonl(args.input)
-    base_prompt = read_prompt(args.prompt)
-    prompt_text = build_prompt_text(base_prompt, args.prompt_version)
+    prompt_path = resolve_prompt_path(args.prompt_version, args.prompt)
+    prompt_text = read_prompt(prompt_path)
     selected_rows = select_rows(
         records,
         limit=args.limit,
@@ -542,7 +553,7 @@ def main() -> int:
 
                 record = build_output_record(
                     row,
-                    prompt_path=args.prompt,
+                    prompt_path=prompt_path,
                     run_version=args.run_version,
                     input_text_version=args.input_text_version,
                     prompt_version=args.prompt_version,
@@ -560,7 +571,7 @@ def main() -> int:
                 status = "failed"
                 record = build_output_record(
                     row,
-                    prompt_path=args.prompt,
+                    prompt_path=prompt_path,
                     run_version=args.run_version,
                     input_text_version=args.input_text_version,
                     prompt_version=args.prompt_version,
