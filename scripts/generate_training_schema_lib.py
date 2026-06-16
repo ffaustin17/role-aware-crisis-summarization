@@ -54,7 +54,6 @@ FINAL_COLUMNS = [
     "tweet_id",
     "source_row_id",
     "tweet_text",
-    "input_text",
     "information_type",
     "information_source",
     "informativeness",
@@ -135,29 +134,6 @@ def initialize_summary_dict(labels: list[str]) -> dict[str, str]:
         ["Police", "EMS"] -> {"Police": "", "EMS": ""}
     """
     return {label: "" for label in labels}
-
-
-def build_input_text(row: pd.Series) -> str:
-    """
-    Construct the metadata-light model/generator input.
-
-    This first version uses:
-    - all assigned responder roles
-    - disaster type
-    - tweet text
-
-    Other metadata is preserved in the dataframe but not exposed in this first
-    input format.
-    """
-    roles = ", ".join(row["roles_array"])
-    disaster_type = normalize_text(row["disaster_type"])
-    tweet_text = normalize_text(row["tweet_text"])
-
-    return (
-        f"Responder Roles: {roles}\n"
-        f"Disaster Type: {disaster_type}\n"
-        f"Tweet: {tweet_text}"
-    )
 
 
 def move_other_rows_to_bottom(
@@ -271,9 +247,6 @@ def build_schema_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
     working_df["final_specific_summary_text"] = ""
     working_df["generated_by"] = ""
 
-    # Build the model/generator input text.
-    working_df["input_text"] = working_df.apply(build_input_text, axis=1)
-
     # Reorder columns into the intended schema.
     working_df = working_df[FINAL_COLUMNS].copy()
 
@@ -321,7 +294,6 @@ def validate_schema_df(schema_df: pd.DataFrame) -> None:
         "tweet_text_has_no_nulls": schema_df["tweet_text"].notna().all(),
         "tweet_text_has_no_empty_strings": (schema_df["tweet_text"] != "").all(),
         "tweet_text_is_unique": schema_df["tweet_text"].is_unique,
-        "input_text_has_no_nulls": schema_df["input_text"].notna().all(),
         "other_rows_are_at_bottom": other_rows_are_at_bottom(schema_df),
         "roles_array_has_no_empty_arrays": schema_df["roles_array"]
         .apply(lambda labels: len(labels) > 0)
@@ -410,12 +382,6 @@ def print_schema_preview(schema_df: pd.DataFrame) -> None:
         .head(10)
         .to_string(index=False)
     )
-
-    print("\n=== INPUT TEXT EXAMPLES ===")
-    for _, row in schema_df.head(5).iterrows():
-        print(f"\n--- tweet_id={row['tweet_id']} | role={row['role']} ---")
-        print(row["input_text"])
-
 
 def print_ordering_summary(schema_df: pd.DataFrame) -> None:
     """Print a compact summary of the non-Other/Other row ordering."""

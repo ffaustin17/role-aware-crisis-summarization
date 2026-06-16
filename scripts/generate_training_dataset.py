@@ -15,8 +15,8 @@ from scripts.generate_training_schema_lib import (
 )
 
 
-DEFAULT_OUTPUT_CSV_PATH = Path("data/processed/frecs_training.csv")
-DEFAULT_OUTPUT_JSONL_PATH = Path("data/processed/frecs_training.jsonl")
+DEFAULT_OUTPUT_CSV_PATH = Path("data/processed/frecs_training_schema_v2.csv")
+DEFAULT_OUTPUT_JSONL_PATH = Path("data/processed/frecs_training_schema_v2.jsonl")
 
 
 def serialize_value(value: Any) -> Any:
