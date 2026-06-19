@@ -1,3 +1,5 @@
+"""Build and validate the cleaned tweet-level FReCS training schema dataframe."""
+
 from __future__ import annotations
 
 from pathlib import Path

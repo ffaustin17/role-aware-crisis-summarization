@@ -1,3 +1,5 @@
+"""Generate external role-aware summary JSONL batches with runtime input builders."""
+
 from __future__ import annotations
 
 import argparse

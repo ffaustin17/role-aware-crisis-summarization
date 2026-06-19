@@ -1,3 +1,5 @@
+"""Inspect the raw FReCS CSV and write role/disaster inventory reports."""
+
 from pathlib import Path
 from typing import Iterable
 

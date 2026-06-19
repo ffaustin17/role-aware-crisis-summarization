@@ -1,3 +1,5 @@
+"""Write cleaned FReCS training schema artifacts to CSV and optional JSONL."""
+
 from __future__ import annotations
 
 import argparse

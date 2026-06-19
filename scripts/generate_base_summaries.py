@@ -1,3 +1,5 @@
+"""Prototype small-batch OpenAI generator for base role-aware summaries."""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,5 @@
+"""Run a minimal OpenAI Responses API smoke test using local environment config."""
+
 from __future__ import annotations
 
 import os
