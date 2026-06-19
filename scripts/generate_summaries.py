@@ -75,14 +75,23 @@ def parse_args() -> argparse.Namespace:
         "--limit-per-label",
         type=int,
         default=None,
-        help="Optional balanced cap per exact non-Other role label.",
+        help="Balanced-mode cap per exact non-Other role label.",
+    )
+    parser.add_argument(
+        "--selection-mode",
+        choices=["dataset_order", "shuffled", "balanced"],
+        default="dataset_order",
+        help=(
+            "Row selection mode. dataset_order uses the schema order, shuffled "
+            "randomizes non-Other rows, and balanced samples exact role labels."
+        ),
     )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument(
         "--resume",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Skip tweet_id values already present in the output file.",
+        help="Skip tweet_id values with prior successful output records.",
     )
     parser.add_argument(
         "--overwrite",
@@ -247,21 +256,27 @@ def select_rows(
     limit: int,
     limit_per_label: int | None,
     seed: int,
+    selection_mode: str,
 ) -> list[dict[str, Any]]:
-    """Select non-Other rows, optionally balancing by exact role label."""
+    """Select non-Other rows using the requested scale or exploration mode."""
     rng = random.Random(seed)
     non_other_records = [
         record
         for record in records
         if normalize_text(record.get("role")) != OTHER_ROLE_LABEL
     ]
+    limit = max(limit, 0)
 
-    if limit_per_label is None:
+    if selection_mode == "dataset_order":
+        return non_other_records[:limit]
+
+    if selection_mode == "shuffled":
         shuffled = non_other_records.copy()
         rng.shuffle(shuffled)
-        return shuffled[: max(limit, 0)]
+        return shuffled[:limit]
 
     selected = []
+    per_label_limit = max(limit_per_label or limit, 0)
 
     for label in ROLE_LABELS:
         label_rows = [
@@ -270,18 +285,18 @@ def select_rows(
             if normalize_text(record.get("role")) == label
         ]
         rng.shuffle(label_rows)
-        selected.extend(label_rows[: max(limit_per_label, 0)])
+        selected.extend(label_rows[:per_label_limit])
 
     rng.shuffle(selected)
-    return selected[: max(limit, 0)]
+    return selected[:limit]
 
 
-def load_completed_tweet_ids(path: Path) -> set[int]:
-    """Return tweet IDs already present in an existing output file."""
+def load_successful_tweet_ids(path: Path) -> set[int]:
+    """Return tweet IDs with successful records in an existing output file."""
     if not path.exists():
         return set()
 
-    completed = set()
+    successful = set()
 
     with path.open("r", encoding="utf-8") as file:
         for line in file:
@@ -297,10 +312,13 @@ def load_completed_tweet_ids(path: Path) -> set[int]:
 
             tweet_id = record.get("tweet_id")
 
-            if isinstance(tweet_id, int):
-                completed.add(tweet_id)
+            if (
+                isinstance(tweet_id, int)
+                and record.get("generation_status") == "success"
+            ):
+                successful.add(tweet_id)
 
-    return completed
+    return successful
 
 
 def extract_response_text(response: object) -> str:
@@ -404,29 +422,29 @@ def build_output_record(
     parsed_response = parsed_response or {}
 
     return {
-        "run_version": run_version,
-        "input_text_version": input_text_version,
-        "prompt_version": prompt_version,
-        "model": model,
-        "generated_by": model,
-        "input_fields_used": input_fields_used,
-        "input_text": constructed_input_text,
         "tweet_id": row.get("tweet_id"),
         "source_row_id": row.get("source_row_id"),
-        "role": row.get("role"),
-        "roles_array": row.get("roles_array"),
-        "disaster_type": row.get("disaster_type"),
-        "secondary_annotations": row.get("secondary_annotations"),
-        "secondary_annotations_array": row.get("secondary_annotations_array"),
-        "information_type": row.get("information_type"),
-        "informativeness": row.get("informativeness"),
-        "information_source": row.get("information_source"),
         "tweet_text": row.get("tweet_text"),
-        "prompt_path": str(prompt_path),
-        "generation_status": generation_status,
+        "disaster_type": row.get("disaster_type"),
+        "role": row.get("role"),
+        "information_type": row.get("information_type"),
         "base_summaries": parsed_response.get("base_summaries", {}),
         "final_base_summary_text": parsed_response.get("final_base_summary_text", ""),
+        "input_text": constructed_input_text,
+        "input_fields_used": input_fields_used,
+        "roles_array": row.get("roles_array"),
+        "secondary_annotations": row.get("secondary_annotations"),
+        "secondary_annotations_array": row.get("secondary_annotations_array"),
         "quality_notes": parsed_response.get("quality_notes", ""),
+        "generation_status": generation_status,
+        "informativeness": row.get("informativeness"),
+        "information_source": row.get("information_source"),
+        "input_text_version": input_text_version,
+        "prompt_version": prompt_version,
+        "prompt_path": str(prompt_path),
+        "run_version": run_version,
+        "model": model,
+        "generated_by": model,
         "raw_response": raw_response,
         "error_message": error_message,
     }
@@ -477,25 +495,26 @@ def main() -> int:
         limit=args.limit,
         limit_per_label=args.limit_per_label,
         seed=args.seed,
+        selection_mode=args.selection_mode,
     )
 
-    completed_tweet_ids: set[int] = set()
+    successful_tweet_ids: set[int] = set()
 
     if args.resume and not args.overwrite:
-        completed_tweet_ids = load_completed_tweet_ids(args.output)
+        successful_tweet_ids = load_successful_tweet_ids(args.output)
 
     skipped_due_to_resume = [
         row
         for row in selected_rows
         if isinstance(row.get("tweet_id"), int)
-        and row["tweet_id"] in completed_tweet_ids
+        and row["tweet_id"] in successful_tweet_ids
     ]
     rows_to_process = [
         row
         for row in selected_rows
         if not (
             isinstance(row.get("tweet_id"), int)
-            and row["tweet_id"] in completed_tweet_ids
+            and row["tweet_id"] in successful_tweet_ids
         )
     ]
 
