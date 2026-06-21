@@ -1,0 +1,42 @@
+{
+  "input_path": "data\\generated\\summaries_prompt_v2_input_v3_first_2000.jsonl",
+  "output_dir": "data\\modeling\\t5_baseline_v1",
+  "random_seed": 42,
+  "split_strategy": "80/10/10 stratified by exact role",
+  "input_field": "input_text",
+  "target_field": "final_base_summary_text",
+  "record_counts": {
+    "train": 3200,
+    "validation": 400,
+    "test": 401
+  },
+  "role_counts": {
+    "train": {
+      "EMS": 318,
+      "Firefighter": 561,
+      "Firefighter/EMS": 84,
+      "Police": 1721,
+      "Police/EMS": 202,
+      "Police/Firefighter": 191,
+      "Police/Firefighter/EMS": 123
+    },
+    "validation": {
+      "EMS": 40,
+      "Firefighter": 70,
+      "Firefighter/EMS": 11,
+      "Police": 215,
+      "Police/EMS": 25,
+      "Police/Firefighter": 24,
+      "Police/Firefighter/EMS": 15
+    },
+    "test": {
+      "EMS": 40,
+      "Firefighter": 70,
+      "Firefighter/EMS": 10,
+      "Police": 216,
+      "Police/EMS": 26,
+      "Police/Firefighter": 24,
+      "Police/Firefighter/EMS": 15
+    }
+  }
+}
