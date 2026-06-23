@@ -22,6 +22,8 @@ DEFAULT_RELEVANCE_BACKEND = "sentence-transformer"
 DEFAULT_FACTUALITY_BACKEND = "proxy"
 DEFAULT_MINICHECK_MODEL = "flan-t5-large"
 DEFAULT_MINICHECK_CACHE_DIR = Path("models/minicheck")
+TWEET_RELEVANCE_WEIGHT = 0.70
+CONTEXT_RELEVANCE_WEIGHT = 0.30
 
 COMPONENT_WEIGHTS = {
     "relevance": 0.35,
@@ -350,6 +352,37 @@ def matched_terms(text: str, terms: list[str]) -> list[str]:
     return [term for term in terms if contains_phrase(text, term)]
 
 
+def extract_tweet_from_input_text(input_text: str) -> str:
+    """Extract the Tweet line from a generated input_text field."""
+    for line in input_text.splitlines():
+        if line.strip().lower().startswith("tweet:"):
+            return line.split(":", maxsplit=1)[1].strip()
+    return ""
+
+
+def remove_tweet_from_input_text(input_text: str) -> str:
+    """Return input_text metadata without the source Tweet line."""
+    lines = [
+        line.strip()
+        for line in input_text.splitlines()
+        if line.strip() and not line.strip().lower().startswith("tweet:")
+    ]
+    return "\n".join(lines)
+
+
+def unique_nonempty(parts: list[str]) -> list[str]:
+    """Return non-empty strings while preserving first-seen order."""
+    seen = set()
+    values = []
+    for part in parts:
+        normalized = normalize_text(part)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        values.append(normalized)
+    return values
+
+
 def build_source_context(record: dict[str, Any]) -> str:
     """Build source context used for grounding and relevance."""
     parts = [
@@ -360,6 +393,31 @@ def build_source_context(record: dict[str, Any]) -> str:
         normalize_text(record.get("information_type")),
     ]
     return "\n".join(part for part in parts if part)
+
+
+def build_relevance_sources(record: dict[str, Any]) -> dict[str, Any]:
+    """Build tweet-dominant relevance sources from a prediction record."""
+    input_text = normalize_text(record.get("input_text"))
+    tweet_text = normalize_text(record.get("tweet_text")) or extract_tweet_from_input_text(
+        input_text
+    )
+    context_parts = unique_nonempty(
+        [
+            normalize_text(record.get("disaster_type")),
+            normalize_text(record.get("role")),
+            normalize_text(record.get("information_type")),
+            remove_tweet_from_input_text(input_text),
+        ]
+    )
+    context_text = "\n".join(context_parts)
+    combined_text = build_source_context(record)
+    return {
+        "tweet_text": tweet_text,
+        "context_text": context_text,
+        "combined_text": combined_text,
+        "tweet_source_available": bool(tweet_text),
+        "context_source_available": bool(context_text),
+    }
 
 
 def lexical_similarity(source_text: str, candidate_text: str) -> float:
@@ -414,6 +472,75 @@ class RelevanceScorer:
             cosine = float((source_embedding * candidate_embedding).sum())
             scores.append(max(0.0, min(1.0, (cosine + 1.0) / 2.0)))
         return scores
+
+    def score_weighted_batch(
+        self,
+        relevance_sources: list[dict[str, Any]],
+        candidate_texts: list[str],
+    ) -> tuple[list[float], list[dict[str, Any]]]:
+        """Score relevance with source tweet weighted above metadata context."""
+        tweet_source_texts = []
+        context_source_texts = []
+        for sources in relevance_sources:
+            if sources["tweet_source_available"]:
+                tweet_source_texts.append(sources["tweet_text"])
+            else:
+                tweet_source_texts.append(sources["combined_text"])
+
+            if sources["context_source_available"]:
+                context_source_texts.append(sources["context_text"])
+            else:
+                context_source_texts.append(sources["tweet_text"])
+
+        tweet_scores = self.score_batch(tweet_source_texts, candidate_texts)
+        context_scores = self.score_batch(context_source_texts, candidate_texts)
+
+        relevance_scores = []
+        relevance_details = []
+        for sources, tweet_score, context_score in zip(
+            relevance_sources,
+            tweet_scores,
+            context_scores,
+            strict=True,
+        ):
+            tweet_available = sources["tweet_source_available"]
+            context_available = sources["context_source_available"]
+            fallback_source = None
+            if tweet_available and context_available:
+                tweet_weight = TWEET_RELEVANCE_WEIGHT
+                context_weight = CONTEXT_RELEVANCE_WEIGHT
+                relevance_score = (
+                    tweet_weight * tweet_score
+                    + context_weight * context_score
+                )
+            elif tweet_available:
+                tweet_weight = 1.0
+                context_weight = 0.0
+                relevance_score = tweet_score
+                context_score = None
+            else:
+                tweet_weight = 0.0
+                context_weight = 0.0
+                relevance_score = tweet_score
+                tweet_score = None
+                fallback_source = "combined_source_context"
+                if not context_available:
+                    context_score = None
+
+            relevance_scores.append(relevance_score)
+            relevance_details.append(
+                {
+                    "tweet_relevance": tweet_score,
+                    "context_relevance": context_score,
+                    "tweet_weight": tweet_weight,
+                    "context_weight": context_weight,
+                    "tweet_source_available": tweet_available,
+                    "context_source_available": context_available,
+                    "fallback_source": fallback_source,
+                }
+            )
+
+        return relevance_scores, relevance_details
 
 
 def score_factuality_proxy(source_text: str, candidate_text: str) -> tuple[float, dict[str, Any]]:
@@ -663,18 +790,29 @@ def score_records(
 ) -> list[dict[str, Any]]:
     """Score all records and return traceable reward records."""
     source_texts = [build_source_context(record) for record in records]
+    relevance_sources = [build_relevance_sources(record) for record in records]
     candidate_texts = [
         normalize_text(record.get("prediction_text") or record.get("final_base_summary_text"))
         for record in records
     ]
-    relevance_scores = relevance_scorer.score_batch(source_texts, candidate_texts)
+    relevance_scores, relevance_details_list = relevance_scorer.score_weighted_batch(
+        relevance_sources,
+        candidate_texts,
+    )
 
     scored_records: list[dict[str, Any]] = []
-    for record, source_text, candidate_text, relevance_score in zip(
+    for (
+        record,
+        source_text,
+        candidate_text,
+        relevance_score,
+        relevance_details,
+    ) in zip(
         records,
         source_texts,
         candidate_texts,
         relevance_scores,
+        relevance_details_list,
         strict=True,
     ):
         roles = split_roles(normalize_text(record.get("role")))
@@ -708,6 +846,7 @@ def score_records(
                 "reward": reward,
                 "component_scores": component_scores,
                 "component_weights": COMPONENT_WEIGHTS,
+                "relevance_details": relevance_details,
                 "roles_scored": roles,
                 "role_coverage_details": role_coverage_details,
                 "urgency_details": urgency_details,

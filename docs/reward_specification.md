@@ -87,13 +87,19 @@ Grounded keywords and phrases:
 ### Relevance
 
 Relevance measures whether the candidate summary is semantically related to the
-source tweet and available context. The preferred implementation uses
-SentenceTransformer cosine similarity between:
+source tweet first, while still giving some credit for matching role/disaster
+context. The preferred implementation uses SentenceTransformer cosine
+similarity to compute:
 
 ```text
-candidate summary
-source tweet/context
+tweet_relevance   = similarity(candidate summary, source tweet)
+context_relevance = similarity(candidate summary, role/disaster/context fields)
+relevance         = 0.70 tweet_relevance + 0.30 context_relevance
 ```
+
+If context fields are unavailable, relevance falls back to tweet-only scoring.
+If the source tweet is unavailable, relevance falls back to the existing combined
+source context.
 
 Cosine similarity is normalized to the 0.0 to 1.0 range. A lexical fallback may
 be used for smoke tests or environments without model access.
