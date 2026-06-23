@@ -100,13 +100,16 @@ be used for smoke tests or environments without model access.
 
 ### Factuality
 
-The first implementation uses a transparent source-grounding proxy. It rewards
-candidate summaries whose content words, numbers, and compact identifiers are
-supported by the source context.
+The local default implementation uses a transparent source-grounding proxy. It
+rewards candidate summaries whose content words, numbers, and compact
+identifiers are supported by the source context. This proxy is useful for fast
+local scoring and debugging because it has no large model dependency.
 
-This is not a full MiniFactScore/MiniCheck replacement. A learned factuality
-checker should replace or augment this proxy once the model dependency is stable
-in the Kaggle environment.
+The scoring script also supports an optional MiniCheck backend. MiniCheck scores
+sentence-level claims from the generated summary against the source context, then
+averages the support probabilities into the factuality component. This should be
+the preferred backend for final reward experiments once the dependency and model
+checkpoint are available in the Kaggle environment.
 
 ### Role Coverage
 
@@ -132,6 +135,8 @@ neutral rather than punitive.
 
 - The current factuality component is a proxy and may over-penalize valid
   paraphrases.
+- MiniCheck improves factual support checking, but it does not fully solve
+  omission or generic-summary problems by itself.
 - Keyword coverage can miss semantically correct wording that uses unexpected
   vocabulary.
 - The reward is designed for analysis and ranking, not as a final human-quality

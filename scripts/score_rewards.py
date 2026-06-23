@@ -19,6 +19,9 @@ DEFAULT_SUMMARY_CSV_PATH = Path("reports/tables/t5_baseline_reward_summary.csv")
 DEFAULT_SUMMARY_MD_PATH = Path("reports/tables/t5_baseline_reward_summary.md")
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_RELEVANCE_BACKEND = "sentence-transformer"
+DEFAULT_FACTUALITY_BACKEND = "proxy"
+DEFAULT_MINICHECK_MODEL = "flan-t5-large"
+DEFAULT_MINICHECK_CACHE_DIR = Path("models/minicheck")
 
 COMPONENT_WEIGHTS = {
     "relevance": 0.35,
@@ -212,6 +215,7 @@ STOPWORDS = {
 TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9'-]*", re.IGNORECASE)
 NUMBER_PATTERN = re.compile(r"\b\d+(?:\.\d+)?\b")
 IDENTIFIER_PATTERN = re.compile(r"\b[A-Z]{2,}\b")
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
 
 
 def parse_args() -> argparse.Namespace:
@@ -220,17 +224,67 @@ def parse_args() -> argparse.Namespace:
         description="Score role-aware summary predictions with reward components."
     )
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT_PATH)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_JSONL_PATH)
-    parser.add_argument("--summary-csv", type=Path, default=DEFAULT_SUMMARY_CSV_PATH)
-    parser.add_argument("--summary-md", type=Path, default=DEFAULT_SUMMARY_MD_PATH)
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--summary-csv", type=Path, default=None)
+    parser.add_argument("--summary-md", type=Path, default=None)
     parser.add_argument(
         "--relevance-backend",
         choices=["sentence-transformer", "lexical"],
         default=DEFAULT_RELEVANCE_BACKEND,
     )
     parser.add_argument("--embedding-model", default=DEFAULT_EMBEDDING_MODEL)
+    parser.add_argument(
+        "--factuality-backend",
+        choices=["proxy", "minicheck"],
+        default=DEFAULT_FACTUALITY_BACKEND,
+        help="Use the local grounding proxy or MiniCheck for factuality.",
+    )
+    parser.add_argument(
+        "--minicheck-model",
+        default=DEFAULT_MINICHECK_MODEL,
+        help="MiniCheck model name, used only with --factuality-backend minicheck.",
+    )
+    parser.add_argument(
+        "--minicheck-cache-dir",
+        type=Path,
+        default=DEFAULT_MINICHECK_CACHE_DIR,
+        help="Checkpoint/cache directory for MiniCheck models.",
+    )
     parser.add_argument("--max-records", type=int, default=None)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.output is None:
+        args.output = default_output_path(args.factuality_backend)
+    if args.summary_csv is None:
+        args.summary_csv = default_summary_csv_path(args.factuality_backend)
+    if args.summary_md is None:
+        args.summary_md = default_summary_md_path(args.factuality_backend)
+    return args
+
+
+def add_stem_suffix(path: Path, suffix: str) -> Path:
+    """Return path with a suffix added before the file extension."""
+    return path.with_name(f"{path.stem}{suffix}{path.suffix}")
+
+
+def default_output_path(factuality_backend: str) -> Path:
+    """Choose a backend-aware default reward JSONL path."""
+    if factuality_backend == "minicheck":
+        return add_stem_suffix(DEFAULT_OUTPUT_JSONL_PATH, "_minicheck")
+    return DEFAULT_OUTPUT_JSONL_PATH
+
+
+def default_summary_csv_path(factuality_backend: str) -> Path:
+    """Choose a backend-aware default reward summary CSV path."""
+    if factuality_backend == "minicheck":
+        return add_stem_suffix(DEFAULT_SUMMARY_CSV_PATH, "_minicheck")
+    return DEFAULT_SUMMARY_CSV_PATH
+
+
+def default_summary_md_path(factuality_backend: str) -> Path:
+    """Choose a backend-aware default reward summary Markdown path."""
+    if factuality_backend == "minicheck":
+        return add_stem_suffix(DEFAULT_SUMMARY_MD_PATH, "_minicheck")
+    return DEFAULT_SUMMARY_MD_PATH
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -269,6 +323,19 @@ def tokenize(text: str) -> list[str]:
     """Tokenize text into lowercased content tokens."""
     tokens = [match.group(0).lower() for match in TOKEN_PATTERN.finditer(text)]
     return [token for token in tokens if len(token) > 2 and token not in STOPWORDS]
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split a generated summary into sentence-level claims for MiniCheck."""
+    normalized = normalize_text(text)
+    if not normalized:
+        return []
+    sentences = [
+        sentence.strip()
+        for sentence in SENTENCE_SPLIT_PATTERN.split(normalized)
+        if sentence.strip()
+    ]
+    return sentences or [normalized]
 
 
 def contains_phrase(text: str, phrase: str) -> bool:
@@ -384,6 +451,150 @@ def score_factuality_proxy(source_text: str, candidate_text: str) -> tuple[float
     return max(0.0, min(1.0, score)), details
 
 
+def as_float(value: Any) -> float:
+    """Convert MiniCheck probability outputs to plain floats."""
+    if hasattr(value, "item"):
+        return float(value.item())
+    return float(value)
+
+
+def as_list(value: Any) -> list[Any]:
+    """Convert tensor-like MiniCheck outputs to plain Python lists."""
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "tolist"):
+        converted = value.tolist()
+        return converted if isinstance(converted, list) else [converted]
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def normalize_probability(value: Any) -> float:
+    """Extract a support probability from common MiniCheck return shapes."""
+    values = as_list(value)
+    if not values:
+        return 0.0
+    if len(values) >= 2:
+        return as_float(values[1])
+    return as_float(values[0])
+
+
+def normalize_label(value: Any) -> Any:
+    """Convert MiniCheck labels to JSON-serializable values."""
+    values = as_list(value)
+    if len(values) == 1:
+        single_value = values[0]
+        if isinstance(single_value, float) and single_value.is_integer():
+            return int(single_value)
+        return single_value
+    return values
+
+
+def positive_label_probability(_pred_label: Any, raw_prob: Any) -> float:
+    """Return MiniCheck's support probability when labels and probs are paired."""
+    probabilities = as_list(raw_prob)
+    if len(probabilities) >= 2:
+        return normalize_probability(probabilities)
+
+    return as_float(probabilities[0]) if probabilities else 0.0
+
+
+def sentence_score_records(
+    claims: list[str],
+    pred_labels: Any,
+    raw_probs: Any,
+) -> tuple[list[float], list[dict[str, Any]]]:
+    """Build MiniCheck sentence-level score details."""
+    labels = as_list(pred_labels)
+    probabilities = as_list(raw_probs)
+    support_scores = []
+    sentence_scores = []
+    for index, claim in enumerate(claims):
+        pred_label = labels[index] if index < len(labels) else None
+        raw_prob = probabilities[index] if index < len(probabilities) else 0.0
+        support_probability = max(
+            0.0,
+            min(1.0, positive_label_probability(pred_label, raw_prob)),
+        )
+        support_scores.append(support_probability)
+        sentence_scores.append(
+            {
+                "claim": claim,
+                "predicted_label": normalize_label(pred_label),
+                "support_probability": support_probability,
+            }
+        )
+    return support_scores, sentence_scores
+
+
+class FactualityScorer:
+    """Score factual grounding with the proxy scorer or optional MiniCheck."""
+
+    def __init__(
+        self,
+        backend: str,
+        minicheck_model: str,
+        minicheck_cache_dir: Path,
+    ) -> None:
+        self.backend = backend
+        self.model_name = minicheck_model
+        self.model = None
+        if backend == "minicheck":
+            try:
+                from minicheck.minicheck import MiniCheck
+            except ImportError as exc:
+                raise ImportError(
+                    "MiniCheck is not installed. Install it in the scoring "
+                    "environment or use --factuality-backend proxy."
+                ) from exc
+
+            self.model = MiniCheck(
+                model_name=minicheck_model,
+                cache_dir=str(minicheck_cache_dir),
+            )
+
+    def score(self, source_text: str, candidate_text: str) -> tuple[float, dict[str, Any]]:
+        """Return a factuality score and traceable backend details."""
+        if self.backend == "proxy":
+            score, details = score_factuality_proxy(source_text, candidate_text)
+            details["backend"] = "proxy"
+            return score, details
+
+        return self.score_minicheck(source_text, candidate_text)
+
+    def score_minicheck(
+        self,
+        source_text: str,
+        candidate_text: str,
+    ) -> tuple[float, dict[str, Any]]:
+        """Score sentence-level summary claims against the source context."""
+        assert self.model is not None
+        claims = split_sentences(candidate_text)
+        if not claims:
+            return 0.0, {
+                "backend": "minicheck",
+                "model": self.model_name,
+                "sentence_scores": [],
+            }
+
+        docs = [source_text] * len(claims)
+        pred_labels, raw_probs, _, _ = self.model.score(docs=docs, claims=claims)
+        support_scores, sentence_scores = sentence_score_records(
+            claims,
+            pred_labels,
+            raw_probs,
+        )
+
+        return mean(support_scores), {
+            "backend": "minicheck",
+            "model": self.model_name,
+            "sentence_scores": sentence_scores,
+        }
+
+
 def score_role_coverage(
     source_text: str,
     candidate_text: str,
@@ -448,6 +659,7 @@ def composite_reward(component_scores: dict[str, float]) -> float:
 def score_records(
     records: list[dict[str, Any]],
     relevance_scorer: RelevanceScorer,
+    factuality_scorer: FactualityScorer,
 ) -> list[dict[str, Any]]:
     """Score all records and return traceable reward records."""
     source_texts = [build_source_context(record) for record in records]
@@ -466,7 +678,7 @@ def score_records(
         strict=True,
     ):
         roles = split_roles(normalize_text(record.get("role")))
-        factuality_score, factuality_details = score_factuality_proxy(
+        factuality_score, factuality_details = factuality_scorer.score(
             source_text,
             candidate_text,
         )
@@ -598,7 +810,12 @@ def main() -> int:
         backend=args.relevance_backend,
         embedding_model=args.embedding_model,
     )
-    scored_records = score_records(records, relevance_scorer)
+    factuality_scorer = FactualityScorer(
+        backend=args.factuality_backend,
+        minicheck_model=args.minicheck_model,
+        minicheck_cache_dir=args.minicheck_cache_dir,
+    )
+    scored_records = score_records(records, relevance_scorer, factuality_scorer)
     summary_rows = summarize_scores(scored_records)
 
     write_jsonl(scored_records, args.output)
