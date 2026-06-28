@@ -276,22 +276,144 @@ structure.
 - `reports/` contains metrics and inventory tables.
 - `models/` remains local-only for checkpoints.
 
+## 15. Reward Scoring For Baseline Predictions
+
+**Motivation:** The first baseline metrics showed how closely T5 matched the
+synthetic GPT targets, but they did not explain whether predictions were useful
+under the project's role-aware criteria.
+
+**What was tried:** The baseline test predictions were scored with the first
+reward function. The initial scoring pass used SentenceTransformer relevance,
+a transparent factuality proxy, role coverage, and urgency. A report-ready CSV
+was also created so predictions, targets, source tweets, and component rewards
+could be inspected side by side.
+
+**Result:** The first reward pass showed that the T5 baseline mostly produced
+middle-range summaries. It also revealed examples where summaries were
+semantically related to the disaster but missed the tweet's specific operational
+content.
+
+Primary artifacts:
+- `data/rewards/t5_baseline_v1_reward_scores.jsonl`
+- `reports/tables/t5_baseline_reward_summary.csv`
+- `reports/tables/baseline_predictions_with_rewards_report.csv`
+
+## 16. MiniCheck Factuality And Tweet-Dominant Relevance
+
+**Motivation:** Qualitative inspection showed that generic role-aware summaries
+could receive too much relevance credit when they matched role or disaster
+metadata but missed the actual tweet. The factuality proxy was also useful but
+too shallow for final reward experiments.
+
+**What was tried:** The reward scorer was extended with optional MiniCheck
+factuality. Relevance was changed from one combined source/context embedding to
+a tweet-dominant blend:
+
+```text
+relevance = 0.70 tweet_relevance + 0.30 context_relevance
+```
+
+The new scorer was run on Kaggle for the 401 baseline test predictions, and a
+new prediction/reward report was generated with tweet relevance, context
+relevance, MiniCheck support probability, and the hard MiniCheck label for
+traceability.
+
+**Result:** The newer scorer became stricter. Mean reward decreased from about
+0.601 to about 0.563, mainly because tweet-dominant relevance reduced credit for
+generic summaries. MiniCheck factuality was useful as a grounding signal, though
+its probabilities were tightly clustered near the decision boundary.
+
+Primary artifacts:
+- `data/rewards/t5_baseline_v1_reward_scores_tweet_relevance_minicheck.jsonl`
+- `reports/tables/t5_baseline_reward_summary_tweet_relevance_minicheck.csv`
+- `reports/tables/baseline_predictions_with_tweet_relevance_minicheck_rewards_report.csv`
+
+## 17. Larger GPT Teacher Summary Dataset
+
+**Motivation:** The first T5 baseline used 4,001 synthetic examples. To support
+a stronger second baseline and later preference optimization, the project needed
+more non-`Other` GPT teacher summaries.
+
+**What was tried:** The resume-aware summary generator continued from the
+existing append-only JSONL. It generated 1,200 additional successful summaries,
+then another 800, using dataset-order mode with prompt version 2 and input text
+version 3. A small number of malformed-JSON responses were preserved as
+historical validation failures, then retried successfully.
+
+**Result:** The append-only generation file now contains 6,001 unique
+successful non-`Other` summaries. A definitive successful-only JSONL was created
+so future modeling steps do not need to filter historical failed records.
+
+Primary artifacts:
+- `data/generated/summaries_prompt_v2_input_v3_first_2000.jsonl`
+- `data/generated/gpt4o_initial_summaries_v0203.jsonl`
+
+## 18. Summary Reward Analysis Reports
+
+**Motivation:** As the project moves toward comparing GPT teacher summaries,
+T5 baseline summaries, and future DPO summaries, reward outputs need a standard
+analysis layer. Simple averages are not enough; the project needs distributions,
+length metrics, and breakdowns by exact role label, disaster type, and
+information type.
+
+**What was tried:** A new JSONL-based analyzer was added for reward datasets.
+It computes descriptive statistics for reward, relevance, factuality, role
+coverage, urgency, summary word count, character length, and sentence count.
+Roles are analyzed by exact raw label only, so multi-role labels such as
+`Police/EMS` remain single categories.
+
+**Result:** The project now has reusable reward-analysis CSVs for both existing
+baseline reward runs. These reports showed that the current T5 baseline is
+clustered in the middle reward range, that multi-role rows are harder, that
+Firefighter rows currently score highest on average, and that MiniCheck
+factuality is compressed but still useful as a continuous support signal.
+
+Primary artifacts:
+- `scripts/analyze_summary_reward_dataset.py`
+- `reports/tables/summary_reward_analysis/`
+
+## 19. Emerging Three-System Research Story
+
+**Motivation:** The project has evolved beyond training one baseline model. The
+more coherent research question is whether a prompted LLM can bootstrap
+role-aware crisis summaries, whether a smaller reusable model can learn that
+behavior, and whether reward-guided preference optimization can improve the
+student model.
+
+**What was clarified:** The project now frames GPT-4o/GPT-4o-mini summaries as
+silver-standard teacher outputs rather than human gold labels. T5-small is the
+first frozen reusable student model. The reward function is both an evaluator
+and the basis for future preference-pair construction.
+
+**Result:** The likely comparison path is:
+
+- Prompted GPT teacher summaries
+- Supervised T5 baseline summaries
+- Future DPO-optimized T5 summaries
+
+These systems can be compared with traditional summarization metrics and with
+the same role-aware reward function.
+
 ## Current State
 
 The project currently has:
 
 - a cleaned FReCS training schema
-- 4,001 successful generated role-aware synthetic summaries
-- fixed T5 baseline train/validation/test splits
+- 6,001 successful non-`Other` GPT teacher summaries
+- a definitive successful-only teacher summary JSONL
+- fixed T5 baseline v1 train/validation/test splits from the earlier 4,001-summary dataset
 - a trained `t5-small` baseline checkpoint stored externally/local to Kaggle
 - committed baseline prediction and metrics artifacts
-- a role-aware reward specification and first reward scoring script
+- a role-aware reward specification and scoring script with MiniCheck support
+- reward outputs and reports for the T5 baseline test predictions
+- reusable reward dataset analysis reports
 
 ## Near-Term Next Steps
 
-1. Run the reward scorer over the full baseline test predictions.
-2. Inspect reward-score distributions by role and disaster type.
-3. Improve factuality scoring with a learned grounding model if feasible.
-4. Compare T5 predictions, OpenAI targets, and reward scores qualitatively.
-5. Decide whether to generate more summaries or move into preference/reward
-   optimization experiments.
+1. Rebuild T5 baseline data splits from `gpt4o_initial_summaries_v0203.jsonl`.
+2. Retrain a stronger T5 baseline on the 6,001-summary dataset.
+3. Generate T5 predictions for the larger shared input set.
+4. Score both GPT teacher summaries and T5 predictions with the same reward
+   function.
+5. Build paired comparison reports for GPT versus T5 reward behavior.
+6. Use reward-ranked candidate summaries to construct preference pairs for DPO.
