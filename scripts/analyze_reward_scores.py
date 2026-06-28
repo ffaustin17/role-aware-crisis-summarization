@@ -50,9 +50,32 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def flatten_category_terms(category_terms: dict[str, list[str]]) -> list[str]:
+    """Flatten category-keyed term matches while preserving category context."""
+    flattened = []
+    for category, terms in category_terms.items():
+        for term in terms:
+            flattened.append(f"{category}:{term}")
+    return flattened
+
+
+def urgency_terms(urgency_details: dict[str, Any], legacy_key: str, category_key: str) -> list[str]:
+    """Return urgency evidence from either legacy term lists or category details."""
+    legacy_terms = urgency_details.get(legacy_key)
+    if isinstance(legacy_terms, list):
+        return [str(term) for term in legacy_terms]
+
+    category_terms = urgency_details.get(category_key)
+    if isinstance(category_terms, dict):
+        return flatten_category_terms(category_terms)
+
+    return []
+
+
 def flatten_record(record: dict[str, Any]) -> dict[str, Any]:
     """Flatten component scores into top-level fields for analysis tables."""
     component_scores = record.get("component_scores", {})
+    urgency_details = record.get("urgency_details", {})
     return {
         "tweet_id": record.get("tweet_id"),
         "source_row_id": record.get("source_row_id"),
@@ -71,10 +94,18 @@ def flatten_record(record: dict[str, Any]) -> dict[str, Any]:
             record.get("factuality_details", {}).get("unsupported_terms", [])
         ),
         "urgency_source_terms": ", ".join(
-            record.get("urgency_details", {}).get("source_terms", [])
+            urgency_terms(
+                urgency_details,
+                "source_terms",
+                "source_terms_by_category",
+            )
         ),
         "urgency_candidate_terms": ", ".join(
-            record.get("urgency_details", {}).get("candidate_terms", [])
+            urgency_terms(
+                urgency_details,
+                "candidate_terms",
+                "candidate_terms_by_category",
+            )
         ),
     }
 

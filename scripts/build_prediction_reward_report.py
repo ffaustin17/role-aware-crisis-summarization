@@ -1,4 +1,4 @@
-"""Build a presentation-ready CSV joining T5 predictions with reward scores."""
+"""Build a presentation-ready CSV joining summary records with reward scores."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_PREDICTIONS_PATH = Path("data/modeling/t5_baseline_v1/test_predictions.jsonl")
+DEFAULT_SUMMARIES_PATH = Path("data/modeling/t5_baseline_v1/test_predictions.jsonl")
 DEFAULT_REWARDS_PATH = Path(
     "data/rewards/t5_baseline_v1_reward_scores_tweet_relevance_minicheck.jsonl"
 )
@@ -20,8 +20,8 @@ DEFAULT_OUTPUT_PATH = Path(
 FIELDNAMES = [
     "original_tweet",
     "input_text",
-    "t5_prediction",
-    "synthesized_summary_target",
+    "candidate_summary",
+    "reference_summary",
     "reward",
     "relevance",
     "tweet_relevance",
@@ -52,12 +52,23 @@ NUMERIC_COLUMNS = [
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for report generation."""
     parser = argparse.ArgumentParser(
-        description="Build a presentation CSV for baseline predictions and rewards."
+        description="Build a presentation CSV for summary records and rewards."
     )
-    parser.add_argument("--predictions", type=Path, default=DEFAULT_PREDICTIONS_PATH)
+    parser.add_argument(
+        "--summaries",
+        "--predictions",
+        dest="summaries",
+        type=Path,
+        default=DEFAULT_SUMMARIES_PATH,
+        help=(
+            "JSONL records containing source context and candidate summaries. "
+            "--predictions is kept as a backwards-compatible alias."
+        ),
+    )
     parser.add_argument("--rewards", type=Path, default=DEFAULT_REWARDS_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
-    parser.add_argument("--expected-count", type=int, default=401)
+    parser.add_argument("--expected-count", type=int, default=None)
+    parser.add_argument("--expected-first-tweet-id", type=int, default=None)
     return parser.parse_args()
 
 
@@ -114,6 +125,24 @@ def numeric_value(value: Any, column_name: str) -> float:
     return float(value)
 
 
+def candidate_summary(record: dict[str, Any], reward_record: dict[str, Any]) -> str:
+    """Return the scored summary from prediction or teacher-summary records."""
+    return normalize_text(
+        record.get("prediction_text")
+        or record.get("final_base_summary_text")
+        or reward_record.get("prediction_text")
+    )
+
+
+def reference_summary(record: dict[str, Any]) -> str:
+    """Return the supervised target when the record has a separate candidate."""
+    if record.get("target_text"):
+        return normalize_text(record.get("target_text"))
+    if record.get("prediction_text") and record.get("final_base_summary_text"):
+        return normalize_text(record.get("final_base_summary_text"))
+    return ""
+
+
 def build_reward_lookup(
     reward_records: list[dict[str, Any]],
 ) -> dict[int, dict[str, Any]]:
@@ -128,27 +157,27 @@ def build_reward_lookup(
 
 
 def build_report_rows(
-    prediction_records: list[dict[str, Any]],
+    summary_records: list[dict[str, Any]],
     reward_records: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Join prediction and reward records into report rows."""
+    """Join summary and reward records into report rows."""
     rewards_by_tweet_id = build_reward_lookup(reward_records)
     rows = []
-    for prediction in prediction_records:
-        tweet_id = int(prediction["tweet_id"])
+    for summary in summary_records:
+        tweet_id = int(summary["tweet_id"])
         if tweet_id not in rewards_by_tweet_id:
             raise ValueError(f"No reward record found for tweet_id={tweet_id}")
 
         reward = rewards_by_tweet_id[tweet_id]
-        input_text = normalize_text(prediction.get("input_text"))
+        input_text = normalize_text(summary.get("input_text") or reward.get("input_text"))
         component_scores = reward.get("component_scores", {})
         relevance_details = reward.get("relevance_details", {})
         row = {
-            "original_tweet": normalize_text(prediction.get("tweet_text"))
+            "original_tweet": normalize_text(summary.get("tweet_text"))
             or extract_tweet_from_input_text(input_text),
             "input_text": input_text,
-            "t5_prediction": normalize_text(prediction.get("prediction_text")),
-            "synthesized_summary_target": normalize_text(prediction.get("target_text")),
+            "candidate_summary": candidate_summary(summary, reward),
+            "reference_summary": reference_summary(summary),
             "reward": numeric_value(reward.get("reward"), "reward"),
             "relevance": numeric_value(component_scores.get("relevance"), "relevance"),
             "tweet_relevance": numeric_value(
@@ -173,15 +202,15 @@ def build_report_rows(
                 "role_coverage",
             ),
             "urgency": numeric_value(component_scores.get("urgency"), "urgency"),
-            "role": normalize_text(prediction.get("role") or reward.get("role")),
+            "role": normalize_text(summary.get("role") or reward.get("role")),
             "disaster_type": normalize_text(
-                prediction.get("disaster_type") or reward.get("disaster_type")
+                summary.get("disaster_type") or reward.get("disaster_type")
             ),
             "information_type": normalize_text(
-                prediction.get("information_type") or reward.get("information_type")
+                summary.get("information_type") or reward.get("information_type")
             ),
             "tweet_id": tweet_id,
-            "source_row_id": prediction.get("source_row_id") or reward.get("source_row_id"),
+            "source_row_id": summary.get("source_row_id") or reward.get("source_row_id"),
         }
         rows.append(row)
 
@@ -195,17 +224,30 @@ def build_report_rows(
     return rows
 
 
-def validate_report_rows(rows: list[dict[str, Any]], expected_count: int | None) -> None:
+def validate_report_rows(
+    rows: list[dict[str, Any]],
+    expected_count: int | None,
+    expected_first_tweet_id: int | None,
+) -> None:
     """Validate row count, column order, and required values."""
     if expected_count is not None and len(rows) != expected_count:
         raise ValueError(f"Expected {expected_count} rows, found {len(rows)}")
-    if rows and int(rows[0]["tweet_id"]) != 3611:
-        raise ValueError(f"Expected first row tweet_id=3611, found {rows[0]['tweet_id']}")
+    if (
+        expected_first_tweet_id is not None
+        and rows
+        and int(rows[0]["tweet_id"]) != expected_first_tweet_id
+    ):
+        raise ValueError(
+            f"Expected first row tweet_id={expected_first_tweet_id}, "
+            f"found {rows[0]['tweet_id']}"
+        )
     for row_number, row in enumerate(rows, start=1):
         if list(row.keys()) != FIELDNAMES:
             raise ValueError(f"Unexpected column order on row {row_number}")
         for column in NUMERIC_COLUMNS:
             numeric_value(row[column], column)
+        if not normalize_text(row["candidate_summary"]):
+            raise ValueError(f"Missing candidate_summary on row {row_number}")
 
 
 def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
@@ -220,12 +262,12 @@ def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
 def main() -> int:
     """Build and write the presentation report."""
     args = parse_args()
-    prediction_records = read_jsonl(args.predictions)
+    summary_records = read_jsonl(args.summaries)
     reward_records = read_jsonl(args.rewards)
-    rows = build_report_rows(prediction_records, reward_records)
-    validate_report_rows(rows, args.expected_count)
+    rows = build_report_rows(summary_records, reward_records)
+    validate_report_rows(rows, args.expected_count, args.expected_first_tweet_id)
     write_csv(rows, args.output)
-    print(f"Prediction records: {len(prediction_records)}")
+    print(f"Summary records: {len(summary_records)}")
     print(f"Reward records: {len(reward_records)}")
     print(f"Wrote report rows: {len(rows)}")
     print(f"Wrote report CSV to: {args.output}")
