@@ -35,11 +35,13 @@ Tracked criteria:
 
 Grounded keywords and phrases:
 - `injured`, `injuries`, `injury`, `wounded`, `casualties`, `fatalities`,
-  `dead`, `death toll`, `killed`
-- `medical`, `medical support`, `medical emergencies`, `patient`, `triage`,
-  `transport`, `patient transport`
-- `urgent`, `urgency`, `critical`, `vulnerable`, `rescue`, `trapped`
-- `ambulance`, `hospital`, `MMU`, `CERT`
+  `dead`, `death toll`, `killed`, `hurt`, `people hurt`
+- `medical`, `medical aid`, `medical assistance`, `medical support`,
+  `emergency medical`, `medical emergencies`, `patient`, `patient care`,
+  `treatment`, `care`, `triage`, `transport`, `patient transport`
+- `urgent`, `urgency`, `critical`, `vulnerable`, `rescue`, `trapped`,
+  `mass casualty`
+- `ambulance`, `ambulance response`, `hospital`, `MMU`, `CERT`
 
 ### Firefighter
 
@@ -56,9 +58,11 @@ Tracked criteria:
 Grounded keywords and phrases:
 - `fire`, `fires`, `wildfire`, `flames`, `smoke`, `haze`
 - `spread`, `fire spread`, `containment`, `contain`, `uncontained`, `growing`
+- `fire control`, `FC`, `firefighting`, `fire crews`
 - `hazardous`, `hazardous material`, `hazmat`, `material exposure`,
-  `chemical`, `gas`
-- `structural`, `collapse`, `trapped`, `search rescue`, `rescue operations`
+  `chemical`, `gas`, `toxic`, `fumes`, `smoke inhalation`
+- `structural`, `structural safety`, `collapse`, `trapped`,
+  `search and rescue`, `search rescue`, `rescue operations`
 - `air quality`, `PSI`, `smoke exposure`, `USAR`
 
 ### Police
@@ -75,12 +79,14 @@ Tracked criteria:
 
 Grounded keywords and phrases:
 - `threat`, `threats`, `safety threat`, `public safety`, `security`
-- `crowd`, `crowd control`, `scene security`
-- `evacuation`, `evacuate`, `evacuations`, `access`, `traffic`, `road closure`,
+- `law enforcement`, `public order`
+- `crowd`, `crowd control`, `scene security`, `secure the area`, `perimeter`
+- `evacuation`, `evacuate`, `evacuations`, `access`, `access control`,
+  `traffic`, `traffic control`, `road closure`, `road closures`,
   `blocked roads`
-- `criminal activity`, `arrest`, `arrested`, `investigate`, `probe`, `unrest`,
-  `protest`
-- `DCC`, `dispatch`, `TEU`
+- `criminal activity`, `criminal investigation`, `crime prevention`, `arrest`,
+  `arrested`, `investigate`, `probe`, `unrest`, `protest`
+- `DCC`, `dispatch`, `TEU`, `CPU`
 
 ## Component Definitions
 
@@ -125,7 +131,9 @@ with source evidence of injuries should receive more credit if the candidate
 mentions injuries, casualties, triage, medical support, or patient transport.
 
 If the source has no configured evidence for a role category, that category is
-not counted against the candidate.
+not counted against the candidate. The scorer also records diagnostic counts for
+the number of applicable source-backed categories and the number covered by the
+candidate.
 
 ### Urgency
 
@@ -133,6 +141,12 @@ Urgency measures whether urgent source evidence is reflected in the candidate.
 Urgency evidence includes casualties, injuries, evacuation, trapped people,
 active fire spread, hazardous materials, threat language, and other immediate
 response cues.
+
+The current implementation scores urgency with concept categories rather than
+raw keyword overlap. A candidate receives credit for covering the same urgency
+concepts found in the source, such as casualty/injury, rescue/evacuation, active
+hazard, or severity/threat evidence. This reduces brittle mismatches like
+`dead` versus `fatalities` or `evacuated` versus `evacuation`.
 
 If no urgency evidence appears in the source context, the urgency score is
 neutral rather than punitive.
@@ -143,8 +157,9 @@ neutral rather than punitive.
   paraphrases.
 - MiniCheck improves factual support checking, but it does not fully solve
   omission or generic-summary problems by itself.
-- Keyword coverage can miss semantically correct wording that uses unexpected
-  vocabulary.
+- Keyword coverage can still miss semantically correct wording that uses
+  unexpected vocabulary, although role coverage and urgency now use broader
+  phrase lists and category-level diagnostics.
 - The reward is designed for analysis and ranking, not as a final human-quality
   judgment.
 - The target summaries are synthetic, so reward outputs should be interpreted as

@@ -47,11 +47,18 @@ ROLE_CRITERIA = {
         ],
         "medical_response": [
             "medical",
+            "medical aid",
+            "medical assistance",
             "medical support",
+            "emergency medical",
             "medical emergency",
             "medical emergencies",
             "patient",
+            "patient care",
+            "treatment",
+            "care",
             "ambulance",
+            "ambulance response",
             "hospital",
             "mmu",
             "cert",
@@ -61,6 +68,7 @@ ROLE_CRITERIA = {
             "transport",
             "patient transport",
             "prioritize medical",
+            "mass casualty",
         ],
         "urgency_vulnerability": [
             "urgent",
@@ -69,6 +77,8 @@ ROLE_CRITERIA = {
             "vulnerable",
             "rescue",
             "trapped",
+            "hurt",
+            "people hurt",
         ],
     },
     "Firefighter": {
@@ -89,6 +99,11 @@ ROLE_CRITERIA = {
             "contained",
             "uncontained",
             "containment strategies",
+            "fire control",
+            "fc",
+            "firefighting",
+            "fire crews",
+            "fire crew",
         ],
         "hazardous_materials": [
             "hazardous",
@@ -97,11 +112,16 @@ ROLE_CRITERIA = {
             "material exposure",
             "chemical",
             "gas",
+            "toxic",
+            "fumes",
+            "smoke inhalation",
         ],
         "structural_rescue": [
             "structural",
+            "structural safety",
             "collapse",
             "trapped",
+            "search and rescue",
             "search rescue",
             "rescue operations",
             "usar",
@@ -120,6 +140,8 @@ ROLE_CRITERIA = {
             "safety threat",
             "public safety",
             "security",
+            "law enforcement",
+            "public order",
         ],
         "crowd_control": [
             "crowd",
@@ -130,14 +152,19 @@ ROLE_CRITERIA = {
             "evacuate",
             "evacuations",
             "access",
+            "access control",
             "traffic",
+            "traffic control",
             "road closure",
+            "road closures",
             "blocked roads",
             "teu",
         ],
         "scene_security": [
             "scene security",
             "ensure scene",
+            "secure the area",
+            "perimeter",
             "dispatch",
             "dcc",
         ],
@@ -146,39 +173,74 @@ ROLE_CRITERIA = {
             "arrest",
             "arrested",
             "investigate",
+            "criminal investigation",
+            "crime prevention",
             "probe",
             "unrest",
             "protest",
+            "cpu",
         ],
     },
 }
 
-URGENCY_TERMS = [
-    "urgent",
-    "urgency",
-    "critical",
-    "emergency",
-    "injured",
-    "injuries",
-    "casualties",
-    "fatalities",
-    "dead",
-    "killed",
-    "trapped",
-    "evacuation",
-    "evacuate",
-    "evacuations",
-    "threat",
-    "threats",
-    "hazardous",
-    "hazmat",
-    "fire spread",
-    "uncontained",
-    "collapse",
-    "explosion",
-    "shooting",
-    "crash",
-]
+URGENCY_CRITERIA = {
+    "casualty_injury": [
+        "injured",
+        "injuries",
+        "injury",
+        "wounded",
+        "hurt",
+        "casualties",
+        "fatalities",
+        "dead",
+        "death",
+        "death toll",
+        "killed",
+        "feared dead",
+    ],
+    "rescue_evacuation": [
+        "trapped",
+        "stranded",
+        "rescue",
+        "evacuation",
+        "evacuate",
+        "evacuated",
+        "evacuations",
+        "shelter",
+    ],
+    "active_hazard": [
+        "hazardous",
+        "hazmat",
+        "toxic",
+        "chemical",
+        "gas",
+        "fire spread",
+        "uncontained",
+        "fire",
+        "wildfire",
+        "flames",
+        "smoke",
+        "collapse",
+        "explosion",
+        "shooting",
+        "crash",
+        "flood",
+        "flooding",
+        "rising water",
+    ],
+    "severity_threat": [
+        "urgent",
+        "urgency",
+        "critical",
+        "emergency",
+        "severe",
+        "immediate",
+        "threat",
+        "threats",
+        "danger",
+        "dangerous",
+    ],
+}
 
 STOPWORDS = {
     "a",
@@ -218,6 +280,7 @@ TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9'-]*", re.IGNORECASE)
 NUMBER_PATTERN = re.compile(r"\b\d+(?:\.\d+)?\b")
 IDENTIFIER_PATTERN = re.compile(r"\b[A-Z]{2,}\b")
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
+PHRASE_NORMALIZE_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
 def parse_args() -> argparse.Namespace:
@@ -340,16 +403,40 @@ def split_sentences(text: str) -> list[str]:
     return sentences or [normalized]
 
 
+def normalize_for_phrase_matching(value: str) -> str:
+    """Normalize text so phrase matching is stable across punctuation."""
+    lowered = value.lower()
+    alphanumeric = PHRASE_NORMALIZE_PATTERN.sub(" ", lowered)
+    return " ".join(alphanumeric.split())
+
+
 def contains_phrase(text: str, phrase: str) -> bool:
-    """Return true if phrase appears as a loose lowercase substring."""
-    normalized_text = f" {text.lower()} "
-    normalized_phrase = f" {phrase.lower()} "
-    return normalized_phrase in normalized_text
+    """Return true if a normalized phrase appears with token boundaries."""
+    normalized_text = normalize_for_phrase_matching(text)
+    normalized_phrase = normalize_for_phrase_matching(phrase)
+    if not normalized_text or not normalized_phrase:
+        return False
+
+    pattern = rf"(?<![a-z0-9]){re.escape(normalized_phrase)}(?![a-z0-9])"
+    return re.search(pattern, normalized_text) is not None
 
 
 def matched_terms(text: str, terms: list[str]) -> list[str]:
     """Return configured terms found in text."""
     return [term for term in terms if contains_phrase(text, term)]
+
+
+def matched_terms_by_category(
+    text: str,
+    criteria: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Return matched terms grouped by configured category."""
+    matches_by_category: dict[str, list[str]] = {}
+    for category, terms in criteria.items():
+        category_matches = matched_terms(text, terms)
+        if category_matches:
+            matches_by_category[category] = category_matches
+    return matches_by_category
 
 
 def extract_tweet_from_input_text(input_text: str) -> str:
@@ -730,7 +817,12 @@ def score_role_coverage(
     """Score candidate coverage of role criteria with source evidence."""
     applicable_categories = 0
     covered_categories = 0
-    details: dict[str, Any] = {}
+    details: dict[str, Any] = {
+        "applicable_category_count": 0,
+        "covered_category_count": 0,
+        "score_reason": "",
+        "roles": {},
+    }
 
     for role in roles:
         role_details: dict[str, Any] = {}
@@ -750,27 +842,50 @@ def score_role_coverage(
                 "covered": bool(candidate_matches),
             }
 
-        details[role] = role_details
+        details["roles"][role] = role_details
 
     if applicable_categories == 0:
+        details["score_reason"] = "neutral_no_applicable_source_role_evidence"
         return 0.5, details
 
-    return covered_categories / applicable_categories, details
+    score = covered_categories / applicable_categories
+    details["applicable_category_count"] = applicable_categories
+    details["covered_category_count"] = covered_categories
+    details["score_reason"] = "covered_applicable_source_role_categories"
+    return score, details
 
 
 def score_urgency(source_text: str, candidate_text: str) -> tuple[float, dict[str, Any]]:
-    """Score whether urgent source signals are reflected in the candidate."""
-    source_matches = matched_terms(source_text, URGENCY_TERMS)
-    candidate_matches = matched_terms(candidate_text, URGENCY_TERMS)
+    """Score whether source urgency concepts are reflected in the candidate."""
+    source_matches_by_category = matched_terms_by_category(source_text, URGENCY_CRITERIA)
+    candidate_matches_by_category = matched_terms_by_category(
+        candidate_text,
+        URGENCY_CRITERIA,
+    )
+    source_categories = list(source_matches_by_category.keys())
+    candidate_categories = list(candidate_matches_by_category.keys())
+    covered_categories = [
+        category for category in source_categories if category in candidate_matches_by_category
+    ]
 
-    if not source_matches:
-        score = 0.5 if not candidate_matches else 0.4
+    if not source_categories:
+        if not candidate_categories:
+            score = 0.5
+            score_reason = "neutral_no_source_or_candidate_urgency_evidence"
+        else:
+            score = 0.4
+            score_reason = "candidate_adds_urgency_without_source_evidence"
     else:
-        score = len(set(source_matches) & set(candidate_matches)) / len(set(source_matches))
+        score = len(covered_categories) / len(source_categories)
+        score_reason = "covered_source_urgency_categories"
 
     details = {
-        "source_terms": source_matches,
-        "candidate_terms": candidate_matches,
+        "source_categories": source_categories,
+        "candidate_categories": candidate_categories,
+        "covered_categories": covered_categories,
+        "source_terms_by_category": source_matches_by_category,
+        "candidate_terms_by_category": candidate_matches_by_category,
+        "score_reason": score_reason,
     }
     return max(0.0, min(1.0, score)), details
 
