@@ -1,0 +1,42 @@
+{
+  "input_path": "data/generated/gpt4o_initial_summaries_v0203.jsonl",
+  "output_dir": "data/modeling/t5_baseline_v2",
+  "random_seed": 42,
+  "split_strategy": "80/10/10 stratified by exact role",
+  "input_field": "input_text",
+  "target_field": "final_base_summary_text",
+  "record_counts": {
+    "train": 4800,
+    "validation": 600,
+    "test": 601
+  },
+  "role_counts": {
+    "train": {
+      "EMS": 474,
+      "Firefighter": 818,
+      "Firefighter/EMS": 122,
+      "Police": 2624,
+      "Police/EMS": 321,
+      "Police/Firefighter": 272,
+      "Police/Firefighter/EMS": 169
+    },
+    "validation": {
+      "EMS": 59,
+      "Firefighter": 102,
+      "Firefighter/EMS": 16,
+      "Police": 328,
+      "Police/EMS": 40,
+      "Police/Firefighter": 34,
+      "Police/Firefighter/EMS": 21
+    },
+    "test": {
+      "EMS": 60,
+      "Firefighter": 103,
+      "Firefighter/EMS": 15,
+      "Police": 328,
+      "Police/EMS": 40,
+      "Police/Firefighter": 34,
+      "Police/Firefighter/EMS": 21
+    }
+  }
+}
