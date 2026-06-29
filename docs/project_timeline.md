@@ -522,6 +522,53 @@ calibration should investigate whether factuality is better used as a lower
 weight component, a rescaled support score, or a thresholded penalty/guardrail
 against unsupported claims.
 
+## 24. DPO Preference Pair Construction
+
+**Motivation:** Before training a DPO-optimized model, the project needed to
+know whether the existing GPT teacher summaries and T5 v2 predictions could
+produce a healthy preference dataset. DPO requires chosen/rejected pairs, not
+single supervised targets, and near-ties can introduce noisy preference labels.
+
+**What was tried:** A new preference-building script joined four existing
+artifacts:
+
+- T5 v2 all-prediction summaries
+- T5 v2 reward scores
+- GPT teacher summaries
+- GPT teacher reward scores
+
+For each shared `tweet_id`, the script compared GPT and T5 reward scores. The
+higher-reward summary became `chosen`, the lower-reward summary became
+`rejected`, and pairs below a reward-margin threshold of `0.03` were skipped as
+near-ties.
+
+**Result:** The first DPO preference dataset retained a meaningful number of
+clean preference pairs:
+
+- Candidate comparisons: 6,001
+- Retained preference pairs: 3,891
+- Skipped near-ties: 2,110
+- Train pairs: 3,120
+- Validation pairs: 394
+- Test pairs: 377
+- GPT teacher chosen: 2,399
+- T5 baseline v2 chosen: 1,492
+
+This suggests the dataset is large enough for a first DPO experiment while
+remaining less noisy than a zero-margin "use everything" setup. The chosen
+distribution is also useful because it does not simply select GPT for every
+row; T5 wins a substantial minority of comparisons.
+
+Primary artifacts:
+- `scripts/build_dpo_preference_dataset.py`
+- `data/preferences/dpo_preferences_t5_v2_vs_gpt4o_reward_v1.jsonl`
+- `data/preferences/dpo_preferences_t5_v2_vs_gpt4o_reward_v1_train.jsonl`
+- `data/preferences/dpo_preferences_t5_v2_vs_gpt4o_reward_v1_validation.jsonl`
+- `data/preferences/dpo_preferences_t5_v2_vs_gpt4o_reward_v1_test.jsonl`
+- `reports/tables/dpo_preferences_t5_v2_vs_gpt4o_summary.csv`
+- `reports/tables/dpo_preferences_t5_v2_vs_gpt4o_by_role.csv`
+- `reports/tables/dpo_preferences_t5_v2_vs_gpt4o_margin_distribution.csv`
+
 ## Current State
 
 The project currently has:
@@ -536,6 +583,7 @@ The project currently has:
 - full-dataset reward outputs for both GPT teacher summaries and T5 v2 predictions
 - reusable reward dataset analysis reports and presentation CSVs
 - an overall and role-level reward comparison between GPT teacher summaries and T5 v2
+- a first DPO-style preference dataset built from GPT-versus-T5 reward comparisons
 - Kaggle notebooks for T5 training/evaluation and reward scoring
 
 ## Near-Term Next Steps
@@ -544,9 +592,10 @@ The project currently has:
    behavior and the role coverage/urgency gaps.
 2. Document factuality as a useful but weakly discriminative grounding signal
    under the current MiniCheck setup.
-3. Decide whether the current reward function is stable enough for preference
-   pair construction.
-4. Design a DPO dataset using paired candidate summaries and reward rankings.
-5. Implement the DPO data-preparation pipeline.
+3. Inspect the first DPO preference dataset, especially role balance, margin
+   distribution, and GPT/T5 chosen-model proportions.
+4. Decide whether to use the current `0.03` margin dataset or generate an
+   alternate broader `0.01` margin dataset for comparison.
+5. Implement the DPO training pipeline from the supervised T5 v2 checkpoint.
 6. Train and evaluate a DPO-optimized model against GPT teacher summaries and
    the supervised T5 v2 baseline.

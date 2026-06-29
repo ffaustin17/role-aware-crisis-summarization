@@ -19,6 +19,7 @@ role-aware-crisis-summarization/
     generated/    OpenAI-generated synthetic summary JSONL batches.
     modeling/     T5 baseline train/validation/test splits and predictions.
     rewards/      Reward-score outputs from the role-aware scorer.
+    preferences/  DPO-style chosen/rejected preference-pair datasets.
 
   docs/           Research/specification documents.
   prompts/        External prompts used by summary generation scripts.
@@ -132,6 +133,17 @@ The composite reward is:
 
 The reward criteria are defined in `docs/reward_specification.md`.
 
+### 8. Build DPO Preference Pairs
+
+```powershell
+.venv\Scripts\python.exe scripts\build_dpo_preference_dataset.py --write-split-files
+```
+
+This joins GPT teacher summaries, T5 baseline predictions, and their reward
+scores. It writes DPO-style `prompt`, `chosen`, and `rejected` JSONL records
+under `data/preferences/`, skipping near-ties with a default reward margin of
+`0.03`.
+
 ## Key Scripts
 
 ```text
@@ -143,6 +155,9 @@ scripts/prepare_t5_baseline_data.py         Build T5 train/validation/test split
 scripts/train_t5_baseline.py                Fine-tune t5-small.
 scripts/evaluate_t5_baseline.py             Compute ROUGE, BLEU, and BERTScore.
 scripts/score_rewards.py                    Compute role-aware reward scores.
+scripts/analyze_summary_reward_dataset.py   Analyze reward JSONL distributions.
+scripts/build_prediction_reward_report.py   Join summaries with reward scores.
+scripts/build_dpo_preference_dataset.py     Build DPO chosen/rejected pairs.
 scripts/smoke_test_openai.py                Check OpenAI API connectivity.
 ```
 
