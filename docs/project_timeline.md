@@ -394,6 +394,134 @@ and the basis for future preference-pair construction.
 These systems can be compared with traditional summarization metrics and with
 the same role-aware reward function.
 
+## 20. T5 Baseline V2 And Full-Dataset Prediction
+
+**Motivation:** The first T5 baseline was trained on 4,001 teacher summaries.
+After the GPT teacher dataset grew to 6,001 successful non-`Other` examples,
+the project needed a stronger supervised baseline trained on the larger
+distribution.
+
+**What was tried:** A fresh Kaggle GPU notebook rebuilt stratified 80/10/10
+splits from `gpt4o_initial_summaries_v0203.jsonl`, trained `t5-small` for three
+epochs, evaluated on the held-out test set, and generated predictions for all
+6,001 examples across train, validation, and test splits.
+
+**Result:** T5 baseline v2 improved over the first baseline:
+
+- ROUGE-1 F1: 0.511072
+- ROUGE-2 F1: 0.271986
+- ROUGE-L F1: 0.452822
+- BLEU: 19.952732
+- BERTScore F1: 0.925358
+
+The full prediction file gives the project a reusable student-model summary
+for every non-`Other` teacher-summary row.
+
+Primary artifacts:
+- `data/modeling/t5_baseline_v2/all_predictions.jsonl`
+- `data/modeling/t5_baseline_v2/train.jsonl`
+- `data/modeling/t5_baseline_v2/validation.jsonl`
+- `data/modeling/t5_baseline_v2/test.jsonl`
+- `reports/tables/t5_small_baseline_v2_metrics.csv`
+- `notebooks/t5-training-and-eval-notebook.ipynb`
+
+## 21. Reward Scorer Tightening
+
+**Motivation:** Before scoring the full 6,001-summary datasets, the reward
+components needed one more calibration pass. Relevance and MiniCheck factuality
+were stable, but role coverage and urgency were still too brittle because they
+relied heavily on exact keyword overlap.
+
+**What was tried:** The reward scorer kept the same composite equation and the
+same tweet-dominant relevance and MiniCheck factuality behavior. Role coverage
+vocabularies were expanded for EMS, Firefighter, and Police. Phrase matching
+was made more punctuation-aware. Urgency was changed from raw term overlap to
+concept coverage over categories such as casualty/injury, rescue/evacuation,
+active hazard, and severity/threat.
+
+**Result:** The scorer became more interpretable and better aligned with the
+project's role-aware criteria without changing reward weights. New diagnostic
+fields now report applicable and covered role categories, urgency categories,
+and score reasons.
+
+Primary artifacts:
+- `scripts/score_rewards.py`
+- `docs/reward_specification.md`
+
+## 22. Full GPT Teacher Versus T5 Reward Comparison
+
+**Motivation:** Once both GPT teacher summaries and T5 v2 predictions existed
+for the same 6,001 non-`Other` rows, the project could compare the two systems
+with the same role-aware reward function.
+
+**What was tried:** A new Kaggle scoring notebook installed MiniCheck, scored
+all T5 v2 predictions, scored all GPT teacher summaries, generated detailed
+reward-analysis CSVs, built presentation-ready joined CSV reports, and created
+overall and role-level comparison tables.
+
+**Result:** GPT teacher summaries scored higher overall, but the gap was not
+large:
+
+- T5 v2 mean reward: 0.593620
+- GPT teacher mean reward: 0.617690
+- Difference: +0.024071 for GPT
+
+The main differences were role coverage and urgency:
+
+- GPT role coverage advantage: +0.036897
+- GPT urgency advantage: +0.075868
+- Relevance was close: +0.005485 for GPT
+- MiniCheck factuality was essentially tied and slightly favored T5
+
+Role-level analysis showed that GPT was especially stronger for EMS,
+Firefighter, and complex multi-role labels, while T5 was competitive on plain
+Police and Firefighter/EMS examples.
+
+Primary artifacts:
+- `data/rewards/t5_baseline_v2_all_predictions_reward_scores_tweet_relevance_minicheck.jsonl`
+- `data/rewards/gpt4o_initial_summaries_v0203_reward_scores_tweet_relevance_minicheck.jsonl`
+- `reports/tables/t5_baseline_v2_all_predictions_with_rewards_report.csv`
+- `reports/tables/gpt4o_initial_summaries_v0203_with_rewards_report.csv`
+- `reports/tables/t5_v2_vs_gpt4o_reward_comparison.csv`
+- `reports/tables/t5_v2_vs_gpt4o_reward_comparison_by_role.csv`
+- `notebooks/scoring-notebook.ipynb`
+
+## 23. Factuality Signal Reflection
+
+**Motivation:** After scoring more than 12,000 summaries across GPT teacher
+outputs and T5 v2 predictions, the project needed to interpret whether the
+MiniCheck factuality component was doing useful work at its current reward
+weight.
+
+**What was observed:** MiniCheck factuality was implemented as a sentence-level
+support probability. Each generated summary sentence is treated as a claim and
+checked against the source context, then sentence probabilities are averaged.
+Because most project summaries are one sentence, factuality is usually a single
+support probability per summary.
+
+The full comparison showed that factuality barely separated GPT from T5:
+
+- T5 v2 factuality mean: 0.480305
+- GPT teacher factuality mean: 0.478697
+- Difference: -0.001608
+
+The distributions were also tightly compressed near the decision boundary. This
+suggests that factuality currently behaves more like a weak grounding prior or
+constant offset than a strong ranking signal.
+
+**Interpretation:** The component is still conceptually important because the
+reward should discourage unsupported summaries. However, its current 0.25
+weight may overstate how much discriminative information MiniCheck is actually
+contributing in this dataset. The compression may be caused by short tweet
+contexts, role-aware operational inferences that are reasonable but not
+explicitly stated, and stylistic similarity between GPT and T5 summaries.
+
+**Result:** The project will keep the current factuality backend and weight for
+the present exploration to preserve a stable reward function. Future reward
+calibration should investigate whether factuality is better used as a lower
+weight component, a rescaled support score, or a thresholded penalty/guardrail
+against unsupported claims.
+
 ## Current State
 
 The project currently has:
@@ -401,19 +529,24 @@ The project currently has:
 - a cleaned FReCS training schema
 - 6,001 successful non-`Other` GPT teacher summaries
 - a definitive successful-only teacher summary JSONL
-- fixed T5 baseline v1 train/validation/test splits from the earlier 4,001-summary dataset
-- a trained `t5-small` baseline checkpoint stored externally/local to Kaggle
-- committed baseline prediction and metrics artifacts
+- fixed T5 baseline v1 splits, predictions, metrics, and reward reports
+- fixed T5 baseline v2 splits, predictions, and metrics from the 6,001-summary dataset
+- trained `t5-small` baseline checkpoints stored externally/local to Kaggle
 - a role-aware reward specification and scoring script with MiniCheck support
-- reward outputs and reports for the T5 baseline test predictions
-- reusable reward dataset analysis reports
+- full-dataset reward outputs for both GPT teacher summaries and T5 v2 predictions
+- reusable reward dataset analysis reports and presentation CSVs
+- an overall and role-level reward comparison between GPT teacher summaries and T5 v2
+- Kaggle notebooks for T5 training/evaluation and reward scoring
 
 ## Near-Term Next Steps
 
-1. Rebuild T5 baseline data splits from `gpt4o_initial_summaries_v0203.jsonl`.
-2. Retrain a stronger T5 baseline on the 6,001-summary dataset.
-3. Generate T5 predictions for the larger shared input set.
-4. Score both GPT teacher summaries and T5 predictions with the same reward
-   function.
-5. Build paired comparison reports for GPT versus T5 reward behavior.
-6. Use reward-ranked candidate summaries to construct preference pairs for DPO.
+1. Interpret the full GPT-versus-T5 reward comparison, especially multi-role
+   behavior and the role coverage/urgency gaps.
+2. Document factuality as a useful but weakly discriminative grounding signal
+   under the current MiniCheck setup.
+3. Decide whether the current reward function is stable enough for preference
+   pair construction.
+4. Design a DPO dataset using paired candidate summaries and reward rankings.
+5. Implement the DPO data-preparation pipeline.
+6. Train and evaluate a DPO-optimized model against GPT teacher summaries and
+   the supervised T5 v2 baseline.
