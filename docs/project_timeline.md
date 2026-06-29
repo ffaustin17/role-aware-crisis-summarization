@@ -569,6 +569,29 @@ Primary artifacts:
 - `reports/tables/dpo_preferences_t5_v2_vs_gpt4o_by_role.csv`
 - `reports/tables/dpo_preferences_t5_v2_vs_gpt4o_margin_distribution.csv`
 
+## 25. DPO Training Script Scaffold
+
+**Motivation:** After constructing a preference dataset, the next step was to
+prepare a training path that could preference-optimize the supervised T5 v2
+checkpoint. Since DPO is a training method rather than a separate model
+architecture, the intended model is still T5: a supervised T5 v2 checkpoint
+continued with preference optimization.
+
+**What was tried:** A custom seq2seq DPO training script was added instead of
+depending immediately on a higher-level DPO library. The script treats the
+supervised T5 v2 checkpoint as the trainable policy model and also loads a
+frozen reference copy of that same checkpoint. It computes chosen and rejected
+sequence log probabilities, applies the DPO loss, evaluates on the validation
+preference split, and saves a new T5-DPO checkpoint.
+
+**Result:** The project now has a Kaggle-ready DPO training entrypoint. It is
+designed to start from the externally stored T5 v2 checkpoint and use the
+committed preference JSONLs. The first expected use is a small smoke run before
+full training.
+
+Primary artifact:
+- `scripts/train_t5_dpo.py`
+
 ## Current State
 
 The project currently has:
@@ -584,6 +607,7 @@ The project currently has:
 - reusable reward dataset analysis reports and presentation CSVs
 - an overall and role-level reward comparison between GPT teacher summaries and T5 v2
 - a first DPO-style preference dataset built from GPT-versus-T5 reward comparisons
+- a custom seq2seq DPO training script ready for Kaggle smoke testing
 - Kaggle notebooks for T5 training/evaluation and reward scoring
 
 ## Near-Term Next Steps
@@ -596,6 +620,7 @@ The project currently has:
    distribution, and GPT/T5 chosen-model proportions.
 4. Decide whether to use the current `0.03` margin dataset or generate an
    alternate broader `0.01` margin dataset for comparison.
-5. Implement the DPO training pipeline from the supervised T5 v2 checkpoint.
+5. Run a Kaggle smoke test of the custom DPO trainer from the supervised T5 v2
+   checkpoint.
 6. Train and evaluate a DPO-optimized model against GPT teacher summaries and
    the supervised T5 v2 baseline.

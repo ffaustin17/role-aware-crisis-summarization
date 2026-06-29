@@ -158,6 +158,7 @@ scripts/score_rewards.py                    Compute role-aware reward scores.
 scripts/analyze_summary_reward_dataset.py   Analyze reward JSONL distributions.
 scripts/build_prediction_reward_report.py   Join summaries with reward scores.
 scripts/build_dpo_preference_dataset.py     Build DPO chosen/rejected pairs.
+scripts/train_t5_dpo.py                     Preference-optimize T5 with DPO.
 scripts/smoke_test_openai.py                Check OpenAI API connectivity.
 ```
 
