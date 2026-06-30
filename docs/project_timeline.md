@@ -592,6 +592,99 @@ full training.
 Primary artifact:
 - `scripts/train_t5_dpo.py`
 
+## 26. First T5-DPO Training And Evaluation
+
+**Motivation:** The project needed to test whether preference optimization could
+improve the supervised T5 v2 model on the role-aware reward criteria, especially
+role coverage and urgency.
+
+**What was tried:** The custom seq2seq DPO trainer was run on Kaggle from the
+supervised T5 v2 checkpoint. The first experiment used the `0.03` margin
+preference dataset, beta `0.1`, one epoch, 3,120 train pairs, and 394 validation
+pairs. The resulting checkpoint generated summaries for the 601-example held-
+out test set and all 6,001 non-`Other` inputs.
+
+The DPO objective trained successfully:
+
+- Validation preference accuracy: 0.720812
+- Validation DPO loss: 0.677679
+- Validation implicit reward margin: 0.032062
+
+Traditional target-similarity metrics decreased relative to supervised T5 v2:
+
+- ROUGE-1 F1: 0.463752
+- ROUGE-2 F1: 0.229735
+- ROUGE-L F1: 0.406215
+- BLEU: 16.312138
+- BERTScore F1: 0.916531
+
+**Result:** DPO moved the model away from exact GPT teacher imitation but
+increased the project's composite reward:
+
+```text
+GPT teacher mean reward:  0.617690
+T5 v2 mean reward:        0.593620
+T5-DPO mean reward:       0.653345
+```
+
+The gain also appeared on the held-out test split:
+
+```text
+GPT teacher test reward:  0.615422
+T5 v2 test reward:        0.595655
+T5-DPO test reward:       0.646819
+```
+
+The overall improvement was driven primarily by role coverage, which increased
+from 0.471233 for supervised T5 to 0.751469 for T5-DPO. Relevance declined from
+0.719472 to 0.705166, while factuality remained nearly unchanged.
+
+Primary artifacts:
+- `notebooks/t5-dpo.ipynb`
+- `data/modeling/t5_dpo_v1_beta_0_1/all_predictions.jsonl`
+- `data/modeling/t5_dpo_v1_beta_0_1/test_predictions.jsonl`
+- `data/rewards/t5_dpo_v1_beta_0_1_reward_scores_tweet_relevance_minicheck.jsonl`
+- `reports/tables/t5_small_dpo_v1_beta_0_1_metrics.csv`
+- `reports/tables/gpt4o_vs_t5_v2_vs_t5_dpo_beta_0_1_reward_comparison.csv`
+
+## 27. Qualitative DPO Analysis And Reward Shortcuts
+
+**Motivation:** A higher automated reward does not necessarily mean that humans
+would judge every summary as better. The large role-coverage increase and lower
+relevance made qualitative inspection necessary.
+
+**What was tried:** A balanced 42-example inspection set was created with six
+diagnostic samples for each exact role label: largest DPO gain/loss versus T5,
+largest gain/loss versus GPT, largest relevance drop, and a median-reward case.
+The samples were read alongside their source tweets, all three candidate
+summaries, component scores, and reward deltas. Template frequency was also
+measured across all 6,001 outputs.
+
+**Result:** DPO produced some genuine improvements. It sometimes preserved more
+tweet-specific evidence, corrected irrelevant T5 role behavior, and expressed
+appropriate responder needs. However, it also learned a strong reward shortcut:
+
+- `scene security` appeared in 93.7% of DPO summaries
+- it appeared at least twice in 38.5% of DPO summaries
+- only 54.7% of DPO summaries were unique
+- some exact summaries were repeated dozens or hundreds of times
+
+The reward scorer correctly penalized several obvious role failures, but other
+awkward or repetitive summaries received high rewards by mentioning configured
+role terms, urgency concepts, and secondary-annotation abbreviations. Police,
+the dominant role label, accounted for most of the overall reward improvement.
+
+The first DPO run should therefore be interpreted as both a successful
+preference-optimization proof of concept and evidence of reward
+misspecification. It improved the measured objective, but part of that gain came
+from template collapse and keyword-oriented behavior rather than uniformly
+better human-readable summaries.
+
+Primary artifacts:
+- `reports/tables/t5_dpo_v1_beta_0_1_qualitative_samples_by_role.jsonl`
+- `reports/tables/t5_dpo_v1_beta_0_1_with_rewards_report.csv`
+- `reports/tables/gpt4o_vs_t5_v2_vs_t5_dpo_beta_0_1_reward_comparison_by_role.csv`
+
 ## Current State
 
 The project currently has:
@@ -607,8 +700,11 @@ The project currently has:
 - reusable reward dataset analysis reports and presentation CSVs
 - an overall and role-level reward comparison between GPT teacher summaries and T5 v2
 - a first DPO-style preference dataset built from GPT-versus-T5 reward comparisons
-- a custom seq2seq DPO training script ready for Kaggle smoke testing
-- Kaggle notebooks for T5 training/evaluation and reward scoring
+- a custom seq2seq DPO training script
+- a trained beta `0.1` T5-DPO checkpoint stored locally and as a Kaggle output
+- full T5-DPO predictions, metrics, reward scores, and comparison reports
+- a qualitative analysis showing both genuine DPO gains and reward-shortcut behavior
+- Kaggle notebooks for T5 training/evaluation, reward scoring, and DPO training
 
 ## Near-Term Next Steps
 
@@ -616,11 +712,11 @@ The project currently has:
    behavior and the role coverage/urgency gaps.
 2. Document factuality as a useful but weakly discriminative grounding signal
    under the current MiniCheck setup.
-3. Inspect the first DPO preference dataset, especially role balance, margin
-   distribution, and GPT/T5 chosen-model proportions.
-4. Decide whether to use the current `0.03` margin dataset or generate an
-   alternate broader `0.01` margin dataset for comparison.
-5. Run a Kaggle smoke test of the custom DPO trainer from the supervised T5 v2
-   checkpoint.
-6. Train and evaluate a DPO-optimized model against GPT teacher summaries and
-   the supervised T5 v2 baseline.
+3. Formalize the DPO qualitative findings, including template repetition,
+   reduced output diversity, and examples of legitimate improvement.
+4. Add automated degeneration diagnostics such as exact-output duplication,
+   repeated phrase frequency, and repeated n-grams.
+5. Treat the beta `0.1` model as the stable first DPO checkpoint before deciding
+   whether additional beta or reward-margin experiments are justified.
+6. Explore future reward calibration, including redundancy, fluency, salience,
+   and more discriminative factuality behavior.
