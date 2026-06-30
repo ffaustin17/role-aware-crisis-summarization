@@ -1,9 +1,13 @@
-# Role-Aware Reward Specification
+# Role-Aware Reward Specification V1
 
-This document defines the first transparent reward function for role-aware
+This document preserves the first transparent reward function for role-aware
 crisis tweet summarization. It is designed for generated summaries where each
 record has a source tweet/context, one or more responder roles, and a candidate
 summary.
+
+This specification is frozen as `reward_v1` for the completed GPT teacher,
+supervised T5 v2, and T5-DPO beta 0.1 experiments. Future reward revisions
+should be versioned separately so those results remain reproducible.
 
 ## Composite Reward
 

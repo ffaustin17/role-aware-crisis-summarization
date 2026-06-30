@@ -131,7 +131,11 @@ The composite reward is:
 0.35 relevance + 0.25 factuality + 0.20 role_coverage + 0.20 urgency
 ```
 
-The reward criteria are defined in `docs/reward_specification.md`.
+The frozen v1 reward criteria are defined in
+`docs/reward_specification_v1.md`.
+The scorer's evolution, empirical challenges, DPO reward shortcuts, and future
+design directions are documented in
+`docs/reward_system_evolution_and_future_design.md`.
 
 ### 8. Build DPO Preference Pairs
 

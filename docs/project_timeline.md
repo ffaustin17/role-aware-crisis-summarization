@@ -253,7 +253,7 @@ The factuality score is currently a lightweight source-grounding proxy, with a
 future path to MiniCheck/MiniFactScore-style factuality scoring.
 
 Primary artifacts:
-- `docs/reward_specification.md`
+- `docs/reward_specification_v1.md`
 - `scripts/score_rewards.py`
 
 ## 14. Project Structure Cleanup
@@ -446,7 +446,7 @@ and score reasons.
 
 Primary artifacts:
 - `scripts/score_rewards.py`
-- `docs/reward_specification.md`
+- `docs/reward_specification_v1.md`
 
 ## 22. Full GPT Teacher Versus T5 Reward Comparison
 
@@ -685,6 +685,58 @@ Primary artifacts:
 - `reports/tables/t5_dpo_v1_beta_0_1_with_rewards_report.csv`
 - `reports/tables/gpt4o_vs_t5_v2_vs_t5_dpo_beta_0_1_reward_comparison_by_role.csv`
 
+## 28. Reward V1 Freeze And Future Reward Design
+
+**Motivation:** The first DPO run demonstrated that reward v1 was useful enough
+to train a model, but also exploitable enough to encourage repetition,
+role-keyword stuffing, and Police-dominant templates. The completed experiments
+needed to remain reproducible while future reward revisions were explored
+separately.
+
+**What was tried:** The current specification was renamed and explicitly frozen
+as `reward_specification_v1.md`. A separate analysis document was created to
+record the reward system's journey, empirical results, qualitative examples,
+component-level challenges, and possible future architecture.
+
+The future design space includes:
+
+- stronger tweet salience and key-information coverage
+- factuality calibration or guardrail behavior
+- role leakage and unsupported-urgency penalties
+- repetition and degeneration penalties
+- optional metadata-aware role, disaster, information-type, and secondary-
+  annotation adherence
+- observed-context and oracle-context modes for future ablation studies
+
+**Result:** Reward v1 remains stable for reproducing the completed GPT, T5, and
+DPO results, while future reward versions can evolve without rewriting the
+meaning of historical scores.
+
+Primary artifacts:
+- `docs/reward_specification_v1.md`
+- `docs/reward_system_evolution_and_future_design.md`
+
+## 29. Final Three-System Human Review Report
+
+**Motivation:** Existing reward JSONLs and analysis tables were useful for
+programmatic analysis but too dense for direct human review. A final report
+needed to foreground the actual tweet, the three competing summaries, and their
+metric differences without IDs or unrelated metadata.
+
+**What was tried:** A 6,001-row CSV was created in canonical tweet order. Each
+row contains the runtime input, original tweet, GPT teacher summary, supervised
+T5 summary, and T5-DPO summary. Reward, relevance, tweet relevance, context
+relevance, factuality probability, role coverage, and urgency are consolidated
+into newline-separated GPT/T5/T5-DPO breakdown cells.
+
+**Result:** The project now has a report-ready artifact for qualitative reading
+and professor-facing comparison. Factuality includes only the continuous
+MiniCheck support probability, and identifiers or irrelevant metadata are
+intentionally omitted.
+
+Primary artifact:
+- `reports/tables/final_gpt_t5_dpo_summary_reward_report.csv`
+
 ## Current State
 
 The project currently has:
@@ -695,7 +747,8 @@ The project currently has:
 - fixed T5 baseline v1 splits, predictions, metrics, and reward reports
 - fixed T5 baseline v2 splits, predictions, and metrics from the 6,001-summary dataset
 - trained `t5-small` baseline checkpoints stored externally/local to Kaggle
-- a role-aware reward specification and scoring script with MiniCheck support
+- a frozen reward v1 specification and scoring script with MiniCheck support
+- a separate reward evolution and future-design analysis document
 - full-dataset reward outputs for both GPT teacher summaries and T5 v2 predictions
 - reusable reward dataset analysis reports and presentation CSVs
 - an overall and role-level reward comparison between GPT teacher summaries and T5 v2
@@ -704,19 +757,18 @@ The project currently has:
 - a trained beta `0.1` T5-DPO checkpoint stored locally and as a Kaggle output
 - full T5-DPO predictions, metrics, reward scores, and comparison reports
 - a qualitative analysis showing both genuine DPO gains and reward-shortcut behavior
+- a finalized 6,001-row human-review CSV comparing GPT, T5, and T5-DPO
 - Kaggle notebooks for T5 training/evaluation, reward scoring, and DPO training
 
 ## Near-Term Next Steps
 
 1. Interpret the full GPT-versus-T5 reward comparison, especially multi-role
    behavior and the role coverage/urgency gaps.
-2. Document factuality as a useful but weakly discriminative grounding signal
-   under the current MiniCheck setup.
-3. Formalize the DPO qualitative findings, including template repetition,
-   reduced output diversity, and examples of legitimate improvement.
-4. Add automated degeneration diagnostics such as exact-output duplication,
+2. Use the finalized human-review report for broader qualitative inspection and
+   professor-facing discussion.
+3. Add automated degeneration diagnostics such as exact-output duplication,
    repeated phrase frequency, and repeated n-grams.
-5. Treat the beta `0.1` model as the stable first DPO checkpoint before deciding
+4. Treat the beta `0.1` model as the stable first DPO checkpoint before deciding
    whether additional beta or reward-margin experiments are justified.
-6. Explore future reward calibration, including redundancy, fluency, salience,
+5. Explore future reward calibration, including redundancy, fluency, salience,
    and more discriminative factuality behavior.
